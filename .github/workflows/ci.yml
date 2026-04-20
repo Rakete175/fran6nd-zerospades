@@ -26,14 +26,12 @@ jobs:
           path: |
             vcpkg/installed
             vcpkg/buildtrees
-          key: windows-x86-${{ hashFiles('vcpkg_x86-windows.txt', '.gitmodules') }}
-          restore-keys: windows-x86-
+          key: windows-x86-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: |
+            windows-x86-
 
       - name: Bootstrap vcpkg
         run: vcpkg\bootstrap-vcpkg.bat -disableMetrics
-
-      - name: Build dependencies
-        run: vcpkg\vcpkg install --recurse @vcpkg_x86-windows.txt
 
       - name: Configure CMake
         run: |
@@ -79,16 +77,12 @@ jobs:
           path: |
             vcpkg/installed
             vcpkg/buildtrees
-          key: windows-x64-${{ hashFiles('vcpkg_x86-windows.txt', '.gitmodules') }}
-          restore-keys: windows-x64-
+          key: windows-x64-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: |
+            windows-x64-
 
       - name: Bootstrap vcpkg
         run: vcpkg\bootstrap-vcpkg.bat -disableMetrics
-
-      - name: Install dependencies
-        run: |
-          (Get-Content vcpkg_x86-windows.txt) -replace 'x86-windows-static', 'x64-windows-static' | Set-Content vcpkg_x64-windows.txt
-          vcpkg\vcpkg install --recurse @vcpkg_x64-windows.txt
 
       - name: Configure CMake
         run: |
@@ -124,26 +118,18 @@ jobs:
         with:
           submodules: true
 
-      - name: Install Vulkan SDK and dependencies
-        run: |
-          brew install molten-vk vulkan-headers glslang
-
       - name: Cache vcpkg and dependencies
         uses: actions/cache@v5
         with:
           path: |
             vcpkg/installed
             vcpkg/buildtrees
-          key: macos-intel-osx12-${{ hashFiles('vcpkg_x86_64-darwin.txt', '.gitmodules') }}
-          restore-keys: macos-intel-osx12-
+          key: macos-intel-osx12-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: |
+            macos-intel-osx12-
 
       - name: Bootstrap vcpkg
         run: vcpkg/bootstrap-vcpkg.sh -disableMetrics
-
-      - name: Install dependencies
-        run: |
-          sed 's/$/:x64-osx/' vcpkg_x86_64-darwin.txt > vcpkg_x64-osx.txt
-          vcpkg/vcpkg install --recurse @vcpkg_x64-osx.txt
 
       - name: Configure CMake
         run: |
@@ -151,6 +137,7 @@ jobs:
             -D CMAKE_BUILD_TYPE=Release \
             -D CMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -D VCPKG_TARGET_TRIPLET=x64-osx \
+            -D VCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/cmake/triplets" \
             -D CMAKE_OSX_ARCHITECTURES=x86_64 \
             -D CMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
             -D CMAKE_CXX_STANDARD=17
@@ -179,26 +166,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Vulkan SDK and dependencies
-        run: |
-          brew install molten-vk vulkan-headers glslang
-
       - name: Cache vcpkg and dependencies
         uses: actions/cache@v5
         with:
           path: |
             vcpkg/installed
             vcpkg/buildtrees
-          key: macos-arm-osx12-${{ hashFiles('vcpkg_x86_64-darwin.txt', '.gitmodules') }}
-          restore-keys: macos-arm-osx12-
+          key: macos-arm-osx12-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: |
+            macos-arm-osx12-
 
       - name: Bootstrap vcpkg
         run: vcpkg/bootstrap-vcpkg.sh -disableMetrics
-
-      - name: Install dependencies
-        run: |
-          sed 's/$/:arm64-osx/' vcpkg_x86_64-darwin.txt > vcpkg_arm64-osx.txt
-          vcpkg/vcpkg install --recurse @vcpkg_arm64-osx.txt
 
       - name: Configure CMake
         run: |
@@ -206,6 +185,7 @@ jobs:
             -D CMAKE_BUILD_TYPE=Release \
             -D CMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -D VCPKG_TARGET_TRIPLET=arm64-osx \
+            -D VCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/cmake/triplets" \
             -D CMAKE_OSX_ARCHITECTURES=arm64 \
             -D CMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
             -D CMAKE_CXX_STANDARD=17
