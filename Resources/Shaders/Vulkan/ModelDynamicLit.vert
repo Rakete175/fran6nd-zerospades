@@ -33,6 +33,7 @@ layout(push_constant) uniform PushConstants {
 	float lightRadiusInversed;
 	vec3 lightLinearDirection;
 	float lightLinearLength;
+	mat4 lightSpotMatrix;
 } pc;
 
 layout(location = 0) in uvec3 positionAttribute;
@@ -43,6 +44,7 @@ layout(location = 0) out vec4 color;
 layout(location = 1) out vec3 lightPos;
 layout(location = 2) out vec3 lightNormal;
 layout(location = 3) out float fogDensityOut;
+layout(location = 4) out vec3 lightTexCoord;
 
 void main() {
 	vec3 position = vec3(positionAttribute);
@@ -74,6 +76,9 @@ void main() {
 		lightPosition += pc.lightLinearDirection * d;
 	}
 	lightPos = lightPosition - worldPos;
+
+	// Spotlight projection coordinates (matches BasicBlockDynamicLit.vert)
+	lightTexCoord = (pc.lightSpotMatrix * vec4(worldPos, 1.0)).xyw;
 
 	// Fog density (precomputed on CPU)
 	fogDensityOut = pc.fogDensity;

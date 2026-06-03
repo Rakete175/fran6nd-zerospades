@@ -24,6 +24,7 @@
 #include "VulkanBuffer.h"
 #include "VulkanImage.h"
 #include "VulkanImageWrapper.h"
+#include "VulkanDynamicLight.h"
 #include <Gui/SDLVulkanDevice.h>
 #include <Core/Bitmap.h>
 #include <Core/BitmapAtlasGenerator.h>
@@ -760,6 +761,26 @@ namespace spades {
 						linearDir = dir / linearLength;
 				}
 
+				// Spotlight projection matrix (matches VulkanMapChunk dlight path).
+				Matrix4 spotMatrix = Matrix4::Identity();
+				if (light->type == client::DynamicLightTypeSpotlight) {
+					VulkanDynamicLight vkLight(*light);
+					spotMatrix = Matrix4::Scale(0.5f) * Matrix4::Translate(1, 1, 1) *
+					             vkLight.GetProjectionMatrix();
+				}
+
+				// Bind this light's spotlight cookie (set 0). Point/linear lights
+				// have no image and fall back to the 1x1 white texture.
+				VulkanImage* cookieImage = nullptr;
+				if (light->image)
+					cookieImage = static_cast<VulkanImageWrapper*>(light->image)->GetVulkanImage();
+				VkDescriptorSet cookieSet = renderer.GetDlightCookieDescriptorSet(cookieImage);
+				if (cookieSet != VK_NULL_HANDLE) {
+					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					                        sharedPipeline.dlightPipelineLayout, 0, 1,
+					                        &cookieSet, 0, nullptr);
+				}
+
 				for (const auto& param : params) {
 					if (mirror && param.depthHack)
 						continue;
@@ -797,6 +818,7 @@ namespace spades {
 						float lightRadiusInversed;
 						Vector3 lightLinearDirection;
 						float lightLinearLength;
+						Matrix4 lightSpotMatrix;
 					} pushConstants;
 
 					pushConstants.projectionViewModelMatrix = mvpMatrix;
@@ -811,6 +833,7 @@ namespace spades {
 					pushConstants.lightRadiusInversed = 1.0f / light->radius;
 					pushConstants.lightLinearDirection = linearDir;
 					pushConstants.lightLinearLength = linearLength;
+					pushConstants.lightSpotMatrix = spotMatrix;
 
 					if (param.depthHack) {
 						VkViewport vp{0.0f, (float)rh, (float)rw, -(float)rh, 0.0f, 0.1f};
@@ -1176,14 +1199,19 @@ namespace spades {
 				dlStages[1].module = dlFragModule;
 				dlStages[1].pName = "main";
 
-				// Dlight pipeline layout: 208 bytes push constants
+				// Dlight pipeline layout: 272 bytes push constants (208 + mat4 spot matrix)
 				VkPushConstantRange dlPushRange{};
 				dlPushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 				dlPushRange.offset = 0;
-				dlPushRange.size = 208;
+				dlPushRange.size = 272;
+
+				// Set 0: spotlight projection cookie (combined image sampler).
+				VkDescriptorSetLayout dlCookieLayout = renderer.GetDlightCookieSetLayout();
 
 				VkPipelineLayoutCreateInfo dlLayoutInfo{};
 				dlLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+				dlLayoutInfo.setLayoutCount = (dlCookieLayout != VK_NULL_HANDLE) ? 1 : 0;
+				dlLayoutInfo.pSetLayouts = (dlCookieLayout != VK_NULL_HANDLE) ? &dlCookieLayout : nullptr;
 				dlLayoutInfo.pushConstantRangeCount = 1;
 				dlLayoutInfo.pPushConstantRanges = &dlPushRange;
 
