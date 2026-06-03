@@ -559,15 +559,16 @@ namespace spades {
 			Vector3 fogCol = renderer.renderer.GetFogColor();
 			fogCol *= fogCol; // linearize
 
-			// Build spot matrix for spotlights
+			// Build spot matrix for spotlights. GetProjectionMatrix() already maps
+			// world space to [0,1] cookie UVs (its projMatrix bakes in the +0.5
+			// bias), so use it directly — matches GL GLDynamicLightShader, which
+			// sets dynamicLightSpotMatrix = light.GetProjectionMatrix() verbatim.
+			// (Applying an extra Scale(0.5)*Translate(1,1,1) here double-biased the
+			// projection and pushed the cone into a corner.)
 			VulkanDynamicLight vkLight(light);
-			Matrix4 spotMatrix;
-			if (light.type == client::DynamicLightTypeSpotlight) {
-				spotMatrix = Matrix4::Scale(0.5f) * Matrix4::Translate(1, 1, 1) *
-				             vkLight.GetProjectionMatrix();
-			} else {
-				spotMatrix = Matrix4::Identity();
-			}
+			Matrix4 spotMatrix = Matrix4::Identity();
+			if (light.type == client::DynamicLightTypeSpotlight)
+				spotMatrix = vkLight.GetProjectionMatrix();
 
 			// Determine light type for shader
 			float lightType = 0.0f; // point

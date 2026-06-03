@@ -762,11 +762,12 @@ namespace spades {
 				}
 
 				// Spotlight projection matrix (matches VulkanMapChunk dlight path).
+				// GetProjectionMatrix() already maps world space to [0,1] cookie
+				// UVs, so use it directly — same as GL.
 				Matrix4 spotMatrix = Matrix4::Identity();
 				if (light->type == client::DynamicLightTypeSpotlight) {
 					VulkanDynamicLight vkLight(*light);
-					spotMatrix = Matrix4::Scale(0.5f) * Matrix4::Translate(1, 1, 1) *
-					             vkLight.GetProjectionMatrix();
+					spotMatrix = vkLight.GetProjectionMatrix();
 				}
 
 				// Bind this light's spotlight cookie (set 0). Point/linear lights
