@@ -265,6 +265,17 @@ namespace spades {
 				const client::DynamicLightParam* light =
 				    static_cast<const client::DynamicLightParam*>(lightPtr);
 
+				// Bind this light's spotlight cookie (set 0). Point/linear lights
+				// have no image and fall back to the 1x1 white texture.
+				VulkanImage* cookieImage = nullptr;
+				if (light->image)
+					cookieImage = static_cast<VulkanImageWrapper*>(light->image)->GetVulkanImage();
+				VkDescriptorSet cookieSet = renderer.GetDlightCookieDescriptorSet(cookieImage);
+				if (cookieSet != VK_NULL_HANDLE) {
+					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					                        dlightPipelineLayout, 0, 1, &cookieSet, 0, nullptr);
+				}
+
 				// Draw from nearest to farthest
 				for (int cz = 0; cz < numChunkDepth; cz++) {
 					DrawColumnDynamicLight(commandBuffer, c.x, c.y, cz, viewOrigin, *light);
@@ -766,8 +777,13 @@ namespace spades {
 				dlPushRange.offset = 0;
 				dlPushRange.size = 224;
 
+				// Set 0: spotlight projection cookie (combined image sampler).
+				VkDescriptorSetLayout dlCookieLayout = renderer.GetDlightCookieSetLayout();
+
 				VkPipelineLayoutCreateInfo dlLayoutInfo{};
 				dlLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+				dlLayoutInfo.setLayoutCount = (dlCookieLayout != VK_NULL_HANDLE) ? 1 : 0;
+				dlLayoutInfo.pSetLayouts = (dlCookieLayout != VK_NULL_HANDLE) ? &dlCookieLayout : nullptr;
 				dlLayoutInfo.pushConstantRangeCount = 1;
 				dlLayoutInfo.pPushConstantRanges = &dlPushRange;
 

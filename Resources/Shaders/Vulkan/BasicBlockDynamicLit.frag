@@ -43,15 +43,21 @@ layout(location = 2) in vec3 lightNormal;
 layout(location = 3) in vec3 lightTexCoord;
 layout(location = 4) in vec3 fogDensity;
 
+// Spotlight projection cookie (Gfx/Spotlight.jpg). Bound for every light; only
+// sampled for spotlights, so point/linear lights get the 1x1 white fallback.
+layout(set = 0, binding = 0) uniform sampler2D spotCookie;
+
 layout(location = 0) out vec4 fragColor;
 
 void main() {
-	// Spotlight projection check
+	// Spotlight projection check + projected cookie (matches GL texture2DProj).
+	vec3 cookie = vec3(1.0);
 	if (pc.lightType == 2.0) {
 		if (lightTexCoord.z < 0.0 ||
 		    any(lessThan(lightTexCoord.xy, vec2(0.0))) ||
 		    any(greaterThan(lightTexCoord.xy, vec2(lightTexCoord.z))))
 			discard;
+		cookie = textureProj(spotCookie, lightTexCoord).xyz;
 	}
 
 	// Diffuse lighting
@@ -68,9 +74,9 @@ void main() {
 
 	intensity *= attenuation;
 
-	// Output: surface color * light contribution
+	// Output: surface color * light contribution * projected cookie
 	fragColor = vec4(color.xyz, 1.0);
-	fragColor.xyz *= pc.lightColor * intensity;
+	fragColor.xyz *= pc.lightColor * intensity * cookie;
 
 	// Fog fading (fade to black, not fog color, since this is additive)
 	fragColor.xyz = mix(fragColor.xyz, vec3(0.0), fogDensity);
