@@ -23,6 +23,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include <vulkan/vulkan.h>
 
 #include <Client/IGameMapListener.h>
@@ -165,6 +166,18 @@ namespace spades {
 
 			Handle<VulkanImage> whiteImage; // 1x1 white image for solid color rendering
 
+			// Shared spotlight-cookie descriptors for the dynamic-light passes.
+			// Both the map and model dlight pipelines bind a set-0 combined image
+			// sampler holding the spotlight projection texture (Gfx/Spotlight.jpg),
+			// or the 1x1 white image for point/linear lights. Descriptor sets are
+			// cached per cookie image (the cookie images are static for the app's
+			// lifetime, so a set is created once and reused across frames).
+			VkDescriptorSetLayout dlightCookieSetLayout;
+			VkDescriptorPool dlightCookiePool;
+			std::unordered_map<VulkanImage*, VkDescriptorSet> dlightCookieCache;
+			void EnsureDlightCookieResources();
+			void DestroyDlightCookieResources();
+
 			// Sky gradient rendering
 			VkPipeline skyPipeline;
 			VkPipelineLayout skyPipelineLayout;
@@ -258,6 +271,13 @@ namespace spades {
 			const Matrix4& GetViewMatrix() const { return viewMatrix; }
 			const Matrix4& GetProjectionMatrix() const { return projectionMatrix; }
 			VulkanImage* GetWhiteImage() { return whiteImage.GetPointerOrNull(); }
+
+			// Spotlight-cookie descriptors shared by the dynamic-light passes.
+			// GetDlightCookieDescriptorSet returns a set-0 combined image sampler
+			// for the given cookie image (pass nullptr for point/linear lights to
+			// get the 1x1 white fallback).
+			VkDescriptorSetLayout GetDlightCookieSetLayout();
+			VkDescriptorSet GetDlightCookieDescriptorSet(VulkanImage* cookieImage);
 			VulkanImage* GetDepthImageWrapper() { return depthImageWrapper.GetPointerOrNull(); }
 			VkImageView GetDepthImageView() const { return depthImageView; }
 			bool IsRenderingMirror() const { return renderingMirror; }
