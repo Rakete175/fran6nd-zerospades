@@ -46,6 +46,12 @@ layout(location = 2) out vec3 lightNormal;
 layout(location = 3) out float fogDensityOut;
 layout(location = 4) out vec3 lightTexCoord;
 
+// Must match BasicModelVertexColor.vert's gl_Position exactly: this additive
+// pass uses depth test EQUAL against the opaque pass, so any depth mismatch
+// makes the weapon model flicker. Both compute projectionViewModel * (pos +
+// modelOrigin) from the same push-constant matrix.
+invariant gl_Position;
+
 void main() {
 	vec3 position = vec3(positionAttribute);
 	vec4 localPos = vec4(position + pc.modelOrigin, 1.0);

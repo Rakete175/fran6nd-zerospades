@@ -47,6 +47,11 @@ layout(location = 7) out vec3 radiosityTextureCoord; // 3D coords into radiosity
 layout(location = 8) out vec3 normalVarying;    // world-space surface normal
 layout(location = 9) out vec2 ambientOcclusionCoord; // 2D coords into AO atlas
 
+// Keep gl_Position bit-identical with ModelDynamicLit.vert so the additive
+// dynamic-light pass (depth test EQUAL) matches this opaque pass's depth and
+// the weapon model doesn't flicker.
+invariant gl_Position;
+
 void main() {
 	// Convert uint8 position to float
 	vec3 position = vec3(positionAttribute);
