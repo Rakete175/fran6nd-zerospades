@@ -50,6 +50,11 @@ layout(location = 9) out vec3 aoCoord;          // 3D coords into AO texture
 layout(location = 10) out vec3 radiosityTextureCoord;
 layout(location = 11) out vec3 normalVarying;
 
+// Must match ModelDynamicLit.vert's gl_Position exactly: the additive dynamic-
+// light pass uses depth test EQUAL against this physical-lighting opaque pass,
+// so a mix of invariant/non-invariant position makes the weapon speckle.
+invariant gl_Position;
+
 void main() {
 	vec3 position = vec3(positionAttribute);
 	vec4 localPos = vec4(position + pushConstants.modelOrigin, 1.0);
