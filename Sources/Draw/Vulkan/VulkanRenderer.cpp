@@ -1953,6 +1953,19 @@ namespace spades {
 				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 				0, 0, nullptr, 0, nullptr, 2, mirrorBarriers);
+
+			// Under MSAA the mirror attachments are multisampled (for pipeline
+			// compatibility with the scene), but the water shader samples reflections
+			// as a regular sampler2D. Resolve colour (and depth at r_water >= 3) into
+			// the single-sample images the water shader binds via GetWaterMirror*().
+			if (framebufferManager->IsMSAA()) {
+				framebufferManager->ResolveMirrorColor(commandBuffer,
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				if ((int)r_water >= 3 && depthResolveFilter) {
+					depthResolveFilter->Resolve(commandBuffer, mirrorDepth.GetPointerOrNull(),
+						framebufferManager->GetMirrorDepthResolveImage().GetPointerOrNull());
+				}
+			}
 		}
 
 		// If we're rendering a 3D scene, render it to the offscreen framebuffer first
@@ -2241,20 +2254,12 @@ namespace spades {
 				longSpriteRenderer->Clear();
 			}
 
-			// Water samples copies of the scene colour/depth, but those copy paths
-			// (vkCmdCopyImage) cannot copy from the multisampled scene attachments,
-			// and the water shader can't sample a multisampled image directly. Until
-			// the water path resolves them, water is suppressed under MSAA.
+			// Water works under MSAA: the screen-copy / mirror paths resolve the
+			// multisampled scene into single-sample images the water shader samples
+			// (see CopySceneForWaterSampling / CopyToMirrorImage / ResolveMirrorColor
+			// and the GetWater*() accessors), and refraction depth reuses the scene's
+			// resolved depth.
 			bool waterEnabled = (int)r_water > 0 && waterRenderer;
-			if (waterEnabled && framebufferManager->IsMSAA()) {
-				static bool warned = false;
-				if (!warned) {
-					SPLog("Water is not yet supported with MSAA (r_multisamples); "
-					      "rendering without water. Set r_multisamples 0 to re-enable water.");
-					warned = true;
-				}
-				waterEnabled = false;
-			}
 
 			// Copy scene to mirror images for water refraction when no real mirror pass
 			if (waterEnabled && framebufferManager->GetMirrorColorImage() && (int)r_water < 2) {

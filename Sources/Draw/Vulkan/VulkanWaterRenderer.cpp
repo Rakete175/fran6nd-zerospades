@@ -911,9 +911,11 @@ namespace spades {
 			return;
 		}
 
-		// Get screen copy images for refraction (copy of main scene, not the render target)
-		Handle<VulkanImage> screenImage = fbManager->GetScreenCopyColorImage();
-		Handle<VulkanImage> depthImage = fbManager->GetScreenCopyDepthImage();
+		// Get screen copy images for refraction (copy of main scene, not the render
+		// target). Under MSAA these are the single-sample resolves; identical to the
+		// screen-copy images at 1x.
+		Handle<VulkanImage> screenImage = fbManager->GetWaterRefractionColorImage();
+		Handle<VulkanImage> depthImage = fbManager->GetWaterRefractionDepthImage();
 
 		if (!screenImage || !depthImage) {
 			SPLog("Warning: Screen copy textures not available");
@@ -963,7 +965,7 @@ namespace spades {
 		// Binding 6: mirrorTexture (for reflections) - dynamic, only for r_water >= 2
 		// Binding 7: mirrorDepthTexture (for depth-aware reflections) - dynamic, only for r_water >= 3
 		if ((int)r_water >= 2) {
-			Handle<VulkanImage> mirrorColorImage = fbManager->GetMirrorColorImage();
+			Handle<VulkanImage> mirrorColorImage = fbManager->GetWaterMirrorColorImage();
 			if (mirrorColorImage) {
 				imageInfos.push_back({});
 				imageInfos.back().imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -984,7 +986,7 @@ namespace spades {
 			}
 
 			if ((int)r_water >= 3) {
-				Handle<VulkanImage> mirrorDepthImage = fbManager->GetMirrorDepthImage();
+				Handle<VulkanImage> mirrorDepthImage = fbManager->GetWaterMirrorDepthImage();
 				if (mirrorDepthImage) {
 					imageInfos.push_back({});
 					imageInfos.back().imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;

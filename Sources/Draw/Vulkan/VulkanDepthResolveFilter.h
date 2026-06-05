@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <vulkan/vulkan.h>
 #include "VulkanPostProcessFilter.h"
@@ -52,6 +53,10 @@ namespace spades {
 			static constexpr int MAX_FRAME_SLOTS = 2;
 			VkDescriptorPool perFrameDescPool[MAX_FRAME_SLOTS];
 			std::vector<VkFramebuffer> perFrameFramebuffers[MAX_FRAME_SLOTS];
+			// Monotonic frame number a slot was last reset on, so we reset a slot's
+			// pool/framebuffers only on its first Resolve() each frame and can safely
+			// resolve more than once per frame (e.g. mirror depth + scene depth).
+			std::uint32_t slotResetFrame[MAX_FRAME_SLOTS];
 
 			void InitRenderPass();
 			void InitDescriptorSetLayout();

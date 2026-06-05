@@ -357,6 +357,10 @@ namespace spades {
 			VkRenderPass GetRenderPass() const { return renderPass; } // Swapchain render pass (for UI)
 			VkRenderPass GetOffscreenRenderPass() const; // Offscreen render pass (for 3D)
 			uint32_t GetCurrentFrameIndex() const { return currentFrameSlot; }
+			// Monotonic frame counter (incremented each FrameDone). Lets per-frame
+			// resources distinguish multiple uses within one frame from frame-to-frame
+			// reuse of the same in-flight slot.
+			std::uint32_t GetFrameNumber() const { return frameNumber; }
 
 			// Queue a buffer for deferred deletion (will be deleted after GPU is done with it)
 			void QueueBufferForDeletion(Handle<VulkanBuffer> buffer);

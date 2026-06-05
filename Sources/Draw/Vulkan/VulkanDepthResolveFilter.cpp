@@ -41,8 +41,10 @@ namespace spades {
 		      resolvePipeline(VK_NULL_HANDLE) {
 			SPADES_MARK_FUNCTION();
 
-			for (int i = 0; i < MAX_FRAME_SLOTS; ++i)
+			for (int i = 0; i < MAX_FRAME_SLOTS; ++i) {
 				perFrameDescPool[i] = VK_NULL_HANDLE;
+				slotResetFrame[i] = UINT32_MAX;
+			}
 
 			InitRenderPass();
 			InitDescriptorSetLayout();
@@ -281,12 +283,18 @@ namespace spades {
 
 			int frameSlot = static_cast<int>(renderer.GetCurrentFrameIndex());
 
-			{
+			// Reset this slot's pool/framebuffers only on its first Resolve() this
+			// frame; subsequent resolves in the same frame (e.g. mirror depth then
+			// scene depth) allocate additional sets without freeing the earlier ones,
+			// which are still referenced by the in-flight command buffer.
+			std::uint32_t frame = renderer.GetFrameNumber();
+			if (slotResetFrame[frameSlot] != frame) {
 				VkDevice dev = device->GetDevice();
 				for (VkFramebuffer fb : perFrameFramebuffers[frameSlot])
 					vkDestroyFramebuffer(dev, fb, nullptr);
 				perFrameFramebuffers[frameSlot].clear();
 				vkResetDescriptorPool(dev, perFrameDescPool[frameSlot], 0);
+				slotResetFrame[frameSlot] = frame;
 			}
 
 			uint32_t w = static_cast<uint32_t>(output->GetWidth());
