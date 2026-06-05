@@ -2051,12 +2051,10 @@ namespace spades {
 			modelRenderer->RenderSunlightPass(commandBuffer, true);
 		}
 
-		// Soft particles sample the scene depth mid-frame as a regular sampler2D,
-		// which a multisampled depth attachment can't supply. Until the soft-particle
-		// path is taught to read the resolved depth, fall back to hardware-depth
-		// (non-soft) particles under MSAA.
-		bool useSoftParticles = spriteRenderer && spriteRenderer->IsSoftParticles()
-		                        && !framebufferManager->IsMSAA();
+		// Soft particles sample the scene depth mid-frame. Under MSAA they read the
+		// single-sample resolved depth (filled right after the opaque pass), so soft
+		// particles work at every sample count.
+		bool useSoftParticles = spriteRenderer && spriteRenderer->IsSoftParticles();
 
 			// Render sprites (non-soft mode: inside offscreen pass with hardware depth test)
 			if (!useSoftParticles) {
@@ -2083,30 +2081,63 @@ namespace spades {
 			Handle<VulkanImage> offscreenColor = framebufferManager->GetColorImage();
 			Handle<VulkanImage> offscreenDepth = framebufferManager->GetDepthImage();
 
+			// Under MSAA the scene depth is multisampled and can't be sampled as a
+			// regular sampler2D. It is final after the opaque pass (sprites are
+			// colour-only, water doesn't write depth), so resolve it once here into
+			// the single-sample R32F resolved-depth image and reuse it for everything
+			// downstream: soft particles, water refraction/reflection depth, and the
+			// depth-reading post filters (all via GetResolvedDepthImage()). The raw
+			// multisampled depth is left in SHADER_READ_ONLY, so the per-branch depth
+			// barriers below are skipped under MSAA.
+			const bool msaaScene = framebufferManager->IsMSAA();
+			if (msaaScene && depthResolveFilter) {
+				VkImageMemoryBarrier dRead{};
+				dRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				dRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+				dRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				dRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				dRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				dRead.image = offscreenDepth->GetImage();
+				dRead.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+				dRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+				dRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+				vkCmdPipelineBarrier(commandBuffer,
+					VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					0, 0, nullptr, 0, nullptr, 1, &dRead);
+
+				depthResolveFilter->Resolve(commandBuffer, offscreenDepth.GetPointerOrNull(),
+					framebufferManager->GetResolvedDepthImage().GetPointerOrNull());
+			}
+
 			if (useSoftParticles) {
 				// Soft particles: transition depth to shader-readable, render sprites
 				// in a color-only pass sampling the depth texture
 
-				// Transition depth to SHADER_READ_ONLY for sampling
-				VkImageMemoryBarrier depthBarrier{};
-				depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-				depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-				depthBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-				depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-				depthBarrier.image = offscreenDepth->GetImage();
-				depthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-				depthBarrier.subresourceRange.baseMipLevel = 0;
-				depthBarrier.subresourceRange.levelCount = 1;
-				depthBarrier.subresourceRange.baseArrayLayer = 0;
-				depthBarrier.subresourceRange.layerCount = 1;
-				depthBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-				depthBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+				// Transition depth to SHADER_READ_ONLY for sampling. Skipped under
+				// MSAA: the depth was already transitioned and resolved above, and the
+				// sprites sample the resolved depth via GetResolvedDepthImage().
+				if (!msaaScene) {
+					VkImageMemoryBarrier depthBarrier{};
+					depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+					depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+					depthBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+					depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+					depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+					depthBarrier.image = offscreenDepth->GetImage();
+					depthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+					depthBarrier.subresourceRange.baseMipLevel = 0;
+					depthBarrier.subresourceRange.levelCount = 1;
+					depthBarrier.subresourceRange.baseArrayLayer = 0;
+					depthBarrier.subresourceRange.layerCount = 1;
+					depthBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+					depthBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-				vkCmdPipelineBarrier(commandBuffer,
-					VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-					0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
+					vkCmdPipelineBarrier(commandBuffer,
+						VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+						VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
+				}
 
 				// Begin sprite render pass (color-only, preserves existing content)
 				VkRenderPassBeginInfo spriteRenderPassInfo{};
@@ -2194,10 +2225,12 @@ namespace spades {
 				barriers[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 				barriers[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
+				// Under MSAA the depth (barriers[1]) was already transitioned to
+				// SHADER_READ and resolved above, so only transition the colour.
 				vkCmdPipelineBarrier(commandBuffer,
 					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-					0, 0, nullptr, 0, nullptr, 2, barriers);
+					0, 0, nullptr, 0, nullptr, msaaScene ? 1u : 2u, barriers);
 			}
 
 			// Clear sprites after rendering (whether soft or not)
@@ -2322,20 +2355,16 @@ namespace spades {
 					0, 0, nullptr, 0, nullptr, 2, waterPostBarriers);
 			}
 
-			// Under MSAA, resolve the multisampled scene into the single-sample
-			// resolve images the post-process chain samples. Both offscreenColor and
-			// offscreenDepth are in SHADER_READ_ONLY_OPTIMAL here (every branch above
-			// ends that way), so the resolves need no extra layout juggling. After
-			// this, offscreenColor/offscreenDepth refer to the resolved images and the
-			// depth-reading filters pick them up via GetResolvedDepthImage().
-			if (framebufferManager->IsMSAA()) {
+			// Under MSAA, resolve the final multisampled scene colour for the
+			// post-process chain. offscreenColor is in SHADER_READ_ONLY_OPTIMAL here
+			// (every branch above ends that way). Depth was already resolved right
+			// after the opaque pass (it doesn't change afterward), so only colour is
+			// resolved now. After this, offscreenColor/offscreenDepth refer to the
+			// resolved images and the depth-reading filters pick them up via
+			// GetResolvedDepthImage().
+			if (msaaScene) {
 				framebufferManager->ResolveScene(commandBuffer,
 				                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				if (depthResolveFilter) {
-					depthResolveFilter->Resolve(commandBuffer,
-					                            offscreenDepth.GetPointerOrNull(),
-					                            framebufferManager->GetResolvedDepthImage().GetPointerOrNull());
-				}
 				offscreenColor = framebufferManager->GetResolvedColorImage();
 				offscreenDepth = framebufferManager->GetResolvedDepthImage();
 			}

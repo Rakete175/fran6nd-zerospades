@@ -582,7 +582,9 @@ namespace spades {
 					SPLog("Failed to allocate depth descriptor set (error code: %d)", result);
 					depthDescriptorSet = VK_NULL_HANDLE;
 				} else {
-					Handle<VulkanImage> depthImage = renderer.GetFramebufferManager()->GetDepthImage();
+					// Resolved depth == raw depth at 1x; the single-sample R32F resolve
+					// under MSAA (a multisampled depth attachment can't be sampled here).
+					Handle<VulkanImage> depthImage = renderer.GetFramebufferManager()->GetResolvedDepthImage();
 					VkDescriptorImageInfo depthImageInfo{};
 					depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 					depthImageInfo.imageView = depthImage->GetImageView();
