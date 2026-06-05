@@ -967,6 +967,16 @@ namespace spades {
 				return;
 			}
 
+			// The map-related renderers below own pipelines, buffers and images that
+			// the GPU may still be reading from in-flight frames (up to
+			// MAX_FRAMES_IN_FLIGHT). Tearing them down or recreating them while that
+			// work is pending frees memory out from under the GPU — on AMD/amdvlk this
+			// surfaces as a crash on the *next* map transition (leave game -> rejoin).
+			// Drain all outstanding GPU work before touching these resources.
+			if (device && device->GetDevice() != VK_NULL_HANDLE) {
+				vkDeviceWaitIdle(device->GetDevice());
+			}
+
 			// Note: We intentionally don't call RemoveListener on the old map here.
 			// When transitioning between clients (e.g., serverlist -> connect), the old map
 			// may already be deleted, making the map pointer stale. The previous Client's
