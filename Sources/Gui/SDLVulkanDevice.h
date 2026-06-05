@@ -79,6 +79,15 @@ namespace spades {
 			bool wideLinesSupported{false};
 			bool geometryShaderSupported{false};
 
+			// MSAA sample counts. `maxUsableSampleCount` is the highest count the
+			// device supports for both colour and depth framebuffer attachments;
+			// `sampleCount` is the count actually selected from `r_multisamples`,
+			// clamped down to what the device allows. Both are resolved once, when
+			// the physical device is picked, and stay fixed for the session
+			// (`r_multisamples` is a Latch setting).
+			VkSampleCountFlagBits maxUsableSampleCount{VK_SAMPLE_COUNT_1_BIT};
+			VkSampleCountFlagBits sampleCount{VK_SAMPLE_COUNT_1_BIT};
+
 			// Swapchain generation counter, incremented on every successful recreation
 		uint32_t swapchainGeneration{0};
 
@@ -92,6 +101,7 @@ namespace spades {
 			void SetupDebugMessenger();
 			void CreateSurface();
 			void PickPhysicalDevice();
+			void ResolveSampleCount();
 			void CreateLogicalDevice();
 			void CreateAllocator();
 			void CreateSwapchain();
@@ -152,6 +162,14 @@ namespace spades {
 			bool HasFillModeNonSolid() const { return fillModeNonSolidSupported; }
 			bool HasWideLines() const { return wideLinesSupported; }
 			bool HasGeometryShader() const { return geometryShaderSupported; }
+
+			// MSAA sample count selected for the offscreen scene attachments
+			// (VK_SAMPLE_COUNT_1_BIT when MSAA is off). Scene render passes,
+			// framebuffer images and pipeline multisample state must all agree on
+			// this value. The highest count the hardware can actually use is
+			// exposed separately for diagnostics.
+			VkSampleCountFlagBits GetSampleCount() const { return sampleCount; }
+			VkSampleCountFlagBits GetMaxUsableSampleCount() const { return maxUsableSampleCount; }
 		};
 
 	} // namespace gui

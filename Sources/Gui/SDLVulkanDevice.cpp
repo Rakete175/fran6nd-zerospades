@@ -25,11 +25,14 @@
 #include "SDLVulkanDevice.h"
 #include <Core/Debug.h>
 #include <Core/Exception.h>
+#include <Core/Settings.h>
 #include <algorithm>
 #include <set>
 #include <cstring>
 #include <vector>
 #include <SDL2/SDL_vulkan.h>
+
+SPADES_SETTING(r_multisamples);
 
 #if defined(__APPLE__) && defined(__x86_64__)
 // MoltenVK global-configuration API, used to disable MTLHeap on Intel Macs.
@@ -100,6 +103,7 @@ namespace spades {
 				SetupDebugMessenger();
 				CreateSurface();
 				PickPhysicalDevice();
+				ResolveSampleCount();
 				CreateLogicalDevice();
 				CreateAllocator();
 				CreateSwapchain();
@@ -423,6 +427,46 @@ namespace spades {
 
 			if (physicalDevice == VK_NULL_HANDLE) {
 				SPRaise("Failed to find a suitable GPU");
+			}
+		}
+
+		void SDLVulkanDevice::ResolveSampleCount() {
+			SPADES_MARK_FUNCTION();
+
+			// Highest sample count the device supports for *both* colour and depth
+			// framebuffer attachments — the scene pass uses one count for both, so
+			// we intersect the two masks.
+			VkPhysicalDeviceProperties props;
+			vkGetPhysicalDeviceProperties(physicalDevice, &props);
+			VkSampleCountFlags counts = props.limits.framebufferColorSampleCounts &
+			                            props.limits.framebufferDepthSampleCounts;
+
+			if (counts & VK_SAMPLE_COUNT_8_BIT)      maxUsableSampleCount = VK_SAMPLE_COUNT_8_BIT;
+			else if (counts & VK_SAMPLE_COUNT_4_BIT) maxUsableSampleCount = VK_SAMPLE_COUNT_4_BIT;
+			else if (counts & VK_SAMPLE_COUNT_2_BIT) maxUsableSampleCount = VK_SAMPLE_COUNT_2_BIT;
+			else                                     maxUsableSampleCount = VK_SAMPLE_COUNT_1_BIT;
+
+			// Map the requested r_multisamples (0/1 = off, 2/4/8 = MSAA) to a sample
+			// flag, rounding down to a power of two, then clamp to what the hardware
+			// can actually use. An unsupported request (e.g. 8x on a 4x device)
+			// silently drops to the highest supported level rather than failing.
+			int requested = (int)r_multisamples;
+			VkSampleCountFlagBits desired;
+			if (requested >= 8)      desired = VK_SAMPLE_COUNT_8_BIT;
+			else if (requested >= 4) desired = VK_SAMPLE_COUNT_4_BIT;
+			else if (requested >= 2) desired = VK_SAMPLE_COUNT_2_BIT;
+			else                     desired = VK_SAMPLE_COUNT_1_BIT;
+
+			sampleCount = static_cast<VkSampleCountFlagBits>(
+			    std::min<uint32_t>(desired, maxUsableSampleCount));
+
+			if (sampleCount != desired) {
+				SPLog("MSAA: requested %dx clamped to %ux (device max %ux)",
+				      requested, (unsigned)sampleCount, (unsigned)maxUsableSampleCount);
+			} else if (sampleCount > VK_SAMPLE_COUNT_1_BIT) {
+				SPLog("MSAA: using %ux", (unsigned)sampleCount);
+			} else {
+				SPLog("MSAA: disabled");
 			}
 		}
 
