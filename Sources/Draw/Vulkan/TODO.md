@@ -8,9 +8,22 @@ GL renderer in `Sources/Draw/OpenGL/` is the reference for everything below.
 The most visible difference vs OpenGL: distant geometry edges look
 rough/aliased because the Vulkan path has **no AA at all** beyond FXAA.
 
-- [ ] **MSAA** — `r_multisamples` ignored. `VK_SAMPLE_COUNT_1_BIT` is
-      hardcoded in every render-pass attachment, framebuffer image, and
-      pipeline `rasterizationSamples`.
+- [x] **MSAA** — `r_multisamples` honoured (clamped to the device's usable
+      sample count). Scene colour/depth render multisampled; colour is resolved
+      with `vkCmdResolveImage` and depth with `VulkanDepthResolveFilter`
+      (`sampler2DMS` → R32F) before post-processing. Remaining gaps:
+      - [ ] **Water + MSAA** — the water refraction/reflection copy paths
+            (`CopyToMirrorImage` / `CopySceneForWaterSampling`, `vkCmdCopyImage`)
+            can't copy from multisampled attachments, and the water shader can't
+            sample them. Water is suppressed under MSAA for now; resolve the
+            scene/mirror colour+depth into single-sample images the water shader
+            samples to lift the restriction.
+      - [ ] **Soft particles + MSAA** — soft particles sample scene depth
+            mid-frame; under MSAA they fall back to hardware-depth (non-soft).
+            Teach them to read the resolved depth.
+      - [ ] **Setup-menu capability** — grey out / reflect the MSAA⇄water and
+            soft-particle incompatibilities in the startup config UI instead of
+            suppressing at runtime (see `CheckConfigCapability`).
 - [ ] **Temporal AA** — `GLTemporalAAFilter` not ported.
 
 ## Post-processing filters
