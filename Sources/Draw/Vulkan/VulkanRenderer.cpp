@@ -1200,9 +1200,7 @@ namespace spades {
 			submitInfo.pSignalSemaphores = signalSemaphores;
 
 			VkResult result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrameSlot]);
-			if (result != VK_SUCCESS) {
-				SPLog("Warning: Failed to submit draw command buffer (error code: %d)", result);
-			}
+			HandleSubmitResult(result, "scene");
 
 			duringSceneRendering = false;
 		}
@@ -1424,9 +1422,7 @@ namespace spades {
 				submitInfo.pSignalSemaphores = signalSemaphores;
 
 				VkResult result = vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrameSlot]);
-				if (result != VK_SUCCESS) {
-					SPLog("[VulkanRenderer::Flip] Failed to submit command buffer (error code: %d)", result);
-				}
+				HandleSubmitResult(result, "2D");
 
 				// Present the image with proper synchronization
 				device->PresentImage(currentImageIndex, signalSemaphores, 1);
@@ -1676,6 +1672,29 @@ namespace spades {
 				flatMapRenderer->GameMapChanged(x, y, z, *map);
 			if (waterRenderer)
 				waterRenderer->GameMapChanged(x, y, z, map);
+		}
+
+		void VulkanRenderer::HandleSubmitResult(VkResult result, const char* where) {
+			if (result == VK_SUCCESS) {
+				consecutiveSubmitFailures = 0;
+				return;
+			}
+
+			// A submit failure that repeats every frame means the renderer is wedged
+			// (e.g. an unsupported operation recorded into the command buffer). Log
+			// the first few, then raise so the user gets an error dialog instead of
+			// an endless silent log loop.
+			static const int kMaxConsecutiveSubmitFailures = 8;
+			consecutiveSubmitFailures++;
+			if (consecutiveSubmitFailures <= 3) {
+				SPLog("Warning: Failed to submit %s command buffer (error code: %d)", where, result);
+			}
+			if (consecutiveSubmitFailures >= kMaxConsecutiveSubmitFailures) {
+				SPRaise("Vulkan: %s command buffer submission failed %d frames in a row "
+				        "(error code: %d). The current renderer settings may not be "
+				        "supported on this GPU.",
+				        where, consecutiveSubmitFailures, result);
+			}
 		}
 
 		void VulkanRenderer::ProcessDeferredDeletions() {

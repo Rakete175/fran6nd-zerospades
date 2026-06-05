@@ -136,6 +136,10 @@ namespace spades {
 			std::uint32_t frameNumber = 0;
 			uint32_t lastSwapchainGeneration{0};
 
+			// Counts consecutive per-frame queue-submit failures so a persistent
+			// failure surfaces as an error instead of spamming the log every frame.
+			int consecutiveSubmitFailures{0};
+
 			bool duringSceneRendering;
 			bool renderingMirror;
 
@@ -242,6 +246,12 @@ namespace spades {
 			// Deferred deletion queue management
 			void ProcessDeferredDeletions();
 			void FlushPendingUploads();
+
+			// Handles the result of a per-frame queue submit. Logs the first
+			// failure, and after several consecutive failures raises an error so
+			// the user sees a dialog rather than an endless silent log loop.
+			// Resets on the first success.
+			void HandleSubmitResult(VkResult result, const char* where);
 
 		protected:
 			~VulkanRenderer();
