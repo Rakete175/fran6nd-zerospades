@@ -637,7 +637,7 @@ namespace spades {
 
 			// ── 1. Generate CoC ───────────────────────────────────────────────
 
-			Handle<VulkanImage> depthImg = renderer.GetFramebufferManager()->GetDepthImage();
+			Handle<VulkanImage> depthImg = renderer.GetFramebufferManager()->GetResolvedDepthImage();
 
 			DoFCoCGenParams cp{};
 			cp.pixelShiftX    = 1.0f / (float)w;

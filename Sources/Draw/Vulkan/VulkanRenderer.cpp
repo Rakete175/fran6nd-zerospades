@@ -1444,7 +1444,9 @@ namespace spades {
 			if (!framebufferManager || !sceneUsedInThisFrame)
 				return Handle<Bitmap>();
 
-			Handle<VulkanImage> srcImage = framebufferManager->GetColorImage();
+			// The final post-process result is mirrored into the resolved colour
+			// image (== the raw colour image when MSAA is off), so read that.
+			Handle<VulkanImage> srcImage = framebufferManager->GetResolvedColorImage();
 			if (!srcImage)
 				return Handle<Bitmap>();
 
@@ -2030,7 +2032,12 @@ namespace spades {
 			modelRenderer->RenderSunlightPass(commandBuffer, true);
 		}
 
-		bool useSoftParticles = spriteRenderer && spriteRenderer->IsSoftParticles();
+		// Soft particles sample the scene depth mid-frame as a regular sampler2D,
+		// which a multisampled depth attachment can't supply. Until the soft-particle
+		// path is taught to read the resolved depth, fall back to hardware-depth
+		// (non-soft) particles under MSAA.
+		bool useSoftParticles = spriteRenderer && spriteRenderer->IsSoftParticles()
+		                        && !framebufferManager->IsMSAA();
 
 			// Render sprites (non-soft mode: inside offscreen pass with hardware depth test)
 			if (!useSoftParticles) {
@@ -2182,18 +2189,33 @@ namespace spades {
 				longSpriteRenderer->Clear();
 			}
 
+			// Water samples copies of the scene colour/depth, but those copy paths
+			// (vkCmdCopyImage) cannot copy from the multisampled scene attachments,
+			// and the water shader can't sample a multisampled image directly. Until
+			// the water path resolves them, water is suppressed under MSAA.
+			bool waterEnabled = (int)r_water > 0 && waterRenderer;
+			if (waterEnabled && framebufferManager->IsMSAA()) {
+				static bool warned = false;
+				if (!warned) {
+					SPLog("Water is not yet supported with MSAA (r_multisamples); "
+					      "rendering without water. Set r_multisamples 0 to re-enable water.");
+					warned = true;
+				}
+				waterEnabled = false;
+			}
+
 			// Copy scene to mirror images for water refraction when no real mirror pass
-			if ((int)r_water > 0 && waterRenderer && framebufferManager->GetMirrorColorImage() && (int)r_water < 2) {
+			if (waterEnabled && framebufferManager->GetMirrorColorImage() && (int)r_water < 2) {
 				framebufferManager->CopyToMirrorImage(commandBuffer);
 			}
 
 			// Copy scene to screen copy images for water refraction sampling
 			// (water renders to the same framebuffer, so it can't sample from it directly)
-			if ((int)r_water > 0 && waterRenderer) {
+			if (waterEnabled) {
 				framebufferManager->CopySceneForWaterSampling(commandBuffer);
 			}
 
-			if ((int)r_water > 0 && waterRenderer && framebufferManager->GetMirrorColorImage()) {
+			if (waterEnabled && framebufferManager->GetMirrorColorImage()) {
 
 				// Transition renderColorImage and renderDepthImage back to COLOR_ATTACHMENT_OPTIMAL
 				// for water rendering
@@ -2279,6 +2301,24 @@ namespace spades {
 					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					0, 0, nullptr, 0, nullptr, 2, waterPostBarriers);
+			}
+
+			// Under MSAA, resolve the multisampled scene into the single-sample
+			// resolve images the post-process chain samples. Both offscreenColor and
+			// offscreenDepth are in SHADER_READ_ONLY_OPTIMAL here (every branch above
+			// ends that way), so the resolves need no extra layout juggling. After
+			// this, offscreenColor/offscreenDepth refer to the resolved images and the
+			// depth-reading filters pick them up via GetResolvedDepthImage().
+			if (framebufferManager->IsMSAA()) {
+				framebufferManager->ResolveScene(commandBuffer,
+				                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				if (depthResolveFilter) {
+					depthResolveFilter->Resolve(commandBuffer,
+					                            offscreenDepth.GetPointerOrNull(),
+					                            framebufferManager->GetResolvedDepthImage().GetPointerOrNull());
+				}
+				offscreenColor = framebufferManager->GetResolvedColorImage();
+				offscreenDepth = framebufferManager->GetResolvedDepthImage();
 			}
 
 			// --- Post-process ping-pong setup ---

@@ -589,7 +589,7 @@ namespace spades {
 
 			// ── Gather image views ────────────────────────────────────────────────
 
-			Handle<VulkanImage> depthImg  = renderer.GetFramebufferManager()->GetDepthImage();
+			Handle<VulkanImage> depthImg  = renderer.GetFramebufferManager()->GetResolvedDepthImage();
 			VulkanImage*        shadowImg       = renderer.GetMapShadowRenderer()->GetShadowImage();
 			VulkanImage*        coarseShadowImg = renderer.GetMapShadowRenderer()->GetCoarseShadowImage();
 

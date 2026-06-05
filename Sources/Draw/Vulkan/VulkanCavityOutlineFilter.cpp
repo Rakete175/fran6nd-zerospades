@@ -360,7 +360,7 @@ namespace spades {
 			pc.thresholds[2] = 0.0F;
 			pc.thresholds[3] = 0.0F;
 
-			Handle<VulkanImage> depthImg = renderer.GetFramebufferManager()->GetDepthImage();
+			Handle<VulkanImage> depthImg = renderer.GetFramebufferManager()->GetResolvedDepthImage();
 
 			VkDescriptorSet ds = BindTextures(frameSlot,
 			    input->GetImageView(),

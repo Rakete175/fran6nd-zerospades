@@ -657,7 +657,7 @@ namespace spades {
 				VkFramebuffer fb = MakeFramebuffer(scannerRenderPass,
 				                                    visibilityImg.GetPointerOrNull(), frameSlot);
 
-				Handle<VulkanImage> depthImg = renderer.GetFramebufferManager()->GetDepthImage();
+				Handle<VulkanImage> depthImg = renderer.GetFramebufferManager()->GetResolvedDepthImage();
 				VkDescriptorSet depthDS = BindShadowDepth(frameSlot, depthImg->GetImageView());
 
 				VkClearValue cv{};
