@@ -2628,7 +2628,8 @@ namespace spades {
 			VkPipelineMultisampleStateCreateInfo multisampling{};
 			multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 			multisampling.sampleShadingEnable = VK_FALSE;
-			multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+			// Match the scene render pass sample count (MSAA).
+			multisampling.rasterizationSamples = device->GetSampleCount();
 
 			// Depth stencil - no depth test, sky is always in background
 			VkPipelineDepthStencilStateCreateInfo depthStencil{};
@@ -3097,7 +3098,9 @@ namespace spades {
 
 			VkPipelineMultisampleStateCreateInfo multisampling{};
 			multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-			multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+			// Match the scene render pass sample count (MSAA) — debug lines draw
+			// into the offscreen scene pass.
+			multisampling.rasterizationSamples = device->GetSampleCount();
 
 			VkPipelineDepthStencilStateCreateInfo depthStencil{};
 			depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;

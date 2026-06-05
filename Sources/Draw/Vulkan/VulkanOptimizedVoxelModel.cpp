@@ -1030,7 +1030,10 @@ namespace spades {
 			VkPipelineMultisampleStateCreateInfo multisampling{};
 			multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 			multisampling.sampleShadingEnable = VK_FALSE;
-			multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+			// Match the scene render pass sample count (MSAA). Models are
+			// alpha-blended, so plain coverage (no alpha-to-coverage, which would
+			// dither blended edges) is used.
+			multisampling.rasterizationSamples = device->GetSampleCount();
 
 			// Depth stencil
 			VkPipelineDepthStencilStateCreateInfo depthStencil{};

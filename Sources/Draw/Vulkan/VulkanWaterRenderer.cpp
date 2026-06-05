@@ -837,6 +837,10 @@ namespace spades {
 		// so the water plane always draws on top in that tie.
 		cfg.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
+		// Match the scene render pass sample count (MSAA); the water surface
+		// draws into the multisampled scene via the water render pass.
+		cfg.rasterizationSamples = device->GetSampleCount();
+
 		// Create descriptor resources
 		CreateDescriptorPool();
 		CreateUniformBuffers();
