@@ -109,6 +109,13 @@ namespace spades {
 			Handle<VulkanImage> mirrorColorImage;
 			Handle<VulkanImage> mirrorDepthImage;
 
+			// Single-sample resolves of the mirror images, so the water shader can
+			// sample reflections under MSAA (the mirror attachments are multisampled
+			// for pipeline compatibility with the scene). Colour is R8/16-format like
+			// the scene; depth is the R32F raw-depth convention. Only when useMSAA.
+			Handle<VulkanImage> mirrorColorResolveImage;
+			Handle<VulkanImage> mirrorDepthResolveImage;
+
 			// Screen copy images for water refraction sampling
 			// (can't sample from render targets during the water pass)
 			Handle<VulkanImage> screenCopyColorImage;
@@ -185,9 +192,33 @@ namespace spades {
 			Handle<VulkanImage> GetMirrorDepthImage() { return mirrorDepthImage; }
 			VkFramebuffer GetMirrorFramebuffer() { return mirrorFramebuffer; }
 
+			// Resolves the multisampled mirror colour into mirrorColorResolveImage
+			// for the water shader (r_water >= 2). No-op when MSAA is off. Mirror
+			// depth is resolved by the renderer via VulkanDepthResolveFilter.
+			// `currentColorLayout` is the mirror colour's layout at call time; the
+			// resolve target ends in SHADER_READ_ONLY_OPTIMAL.
+			void ResolveMirrorColor(VkCommandBuffer commandBuffer, VkImageLayout currentColorLayout);
+
 			void CopySceneForWaterSampling(VkCommandBuffer commandBuffer);
 			Handle<VulkanImage> GetScreenCopyColorImage() { return screenCopyColorImage; }
 			Handle<VulkanImage> GetScreenCopyDepthImage() { return screenCopyDepthImage; }
+
+			// Single-sample images the water shader samples. These hide MSAA: at 1x
+			// they are the original copy targets; under MSAA they are the resolved
+			// versions (refraction depth reuses the scene's resolved depth, since the
+			// depth behind the water is the scene depth before the water pass).
+			Handle<VulkanImage> GetWaterRefractionColorImage() { return screenCopyColorImage; }
+			Handle<VulkanImage> GetWaterRefractionDepthImage() {
+				return useMSAA ? renderDepthResolveImage : screenCopyDepthImage;
+			}
+			Handle<VulkanImage> GetWaterMirrorColorImage() {
+				return useMSAA ? mirrorColorResolveImage : mirrorColorImage;
+			}
+			Handle<VulkanImage> GetWaterMirrorDepthImage() {
+				return useMSAA ? mirrorDepthResolveImage : mirrorDepthImage;
+			}
+			Handle<VulkanImage> GetMirrorColorResolveImage() { return mirrorColorResolveImage; }
+			Handle<VulkanImage> GetMirrorDepthResolveImage() { return mirrorDepthResolveImage; }
 		};
 
 		// Shorter name

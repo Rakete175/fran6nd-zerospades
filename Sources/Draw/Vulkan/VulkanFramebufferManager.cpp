@@ -140,6 +140,25 @@ namespace spades {
 				renderDepthResolveImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
 				renderDepthResolveImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
+
+				// Single-sample resolves of the mirror (water reflection) images.
+				mirrorColorResolveImage = Handle<VulkanImage>::New(
+				    device, renderWidth, renderHeight, fbColorFormat,
+				    VK_IMAGE_TILING_OPTIMAL,
+				    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+				mirrorColorResolveImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
+				mirrorColorResolveImage->CreateSampler(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
+
+				mirrorDepthResolveImage = Handle<VulkanImage>::New(
+				    device, renderWidth, renderHeight, VK_FORMAT_R32_SFLOAT,
+				    VK_IMAGE_TILING_OPTIMAL,
+				    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+				mirrorDepthResolveImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
+				mirrorDepthResolveImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
+				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 			}
 
 			VkImageView attachments[] = {
@@ -548,12 +567,131 @@ namespace spades {
 			// tracking treats the resolved image as the post-process input from here.
 		}
 
+		void VulkanFramebufferManager::ResolveMirrorColor(VkCommandBuffer commandBuffer,
+		                                                  VkImageLayout currentColorLayout) {
+			SPADES_MARK_FUNCTION();
+
+			if (!useMSAA)
+				return;
+
+			VkImage msColor = mirrorColorImage->GetImage();
+			VkImage resolved = mirrorColorResolveImage->GetImage();
+
+			VkImageMemoryBarrier pre[2]{};
+			pre[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			pre[0].oldLayout = currentColorLayout;
+			pre[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			pre[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[0].image = msColor;
+			pre[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			pre[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+			pre[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			pre[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			pre[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			pre[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			pre[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[1].image = resolved;
+			pre[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			pre[1].srcAccessMask = 0;
+			pre[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0, 0, nullptr, 0, nullptr, 2, pre);
+
+			VkImageResolve region{};
+			region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			region.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
+			vkCmdResolveImage(commandBuffer,
+				msColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+			VkImageMemoryBarrier toRead{};
+			toRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toRead.image = resolved;
+			toRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0, 0, nullptr, 0, nullptr, 1, &toRead);
+		}
+
 		void VulkanFramebufferManager::CopyToMirrorImage(VkCommandBuffer commandBuffer,
 		                                                  VkFramebuffer srcFb) {
 			SPADES_MARK_FUNCTION();
 
 			if (srcFb == VK_NULL_HANDLE) {
 				srcFb = renderFramebuffer;
+			}
+
+			if (useMSAA) {
+				// MSAA (cheap reflection, r_water < 2): resolve the multisampled scene
+				// colour into the single-sample mirror resolve image the water shader
+				// samples. The scene colour returns to SHADER_READ for the water pass.
+				VkImage srcColor = renderColorImage->GetImage();
+				VkImage dstColor = mirrorColorResolveImage->GetImage();
+
+				VkImageMemoryBarrier pre[2]{};
+				pre[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				pre[0].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				pre[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				pre[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[0].image = srcColor;
+				pre[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+				pre[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+				pre[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+				pre[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				pre[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				pre[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				pre[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[1].image = dstColor;
+				pre[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+				pre[1].srcAccessMask = 0;
+				pre[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+				vkCmdPipelineBarrier(commandBuffer,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					0, 0, nullptr, 0, nullptr, 2, pre);
+
+				VkImageResolve region{};
+				region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+				region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+				region.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
+				vkCmdResolveImage(commandBuffer,
+					srcColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					dstColor, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+				VkImageMemoryBarrier post[2]{};
+				post[0] = pre[1];
+				post[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				post[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				post[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+				post[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+				post[1] = pre[0];
+				post[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				post[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				post[1].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+				post[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+				vkCmdPipelineBarrier(commandBuffer,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					0, 0, nullptr, 0, nullptr, 2, post);
+				return;
 			}
 
 			// Get source image (from main render buffer)
@@ -668,6 +806,69 @@ namespace spades {
 
 		void VulkanFramebufferManager::CopySceneForWaterSampling(VkCommandBuffer commandBuffer) {
 			SPADES_MARK_FUNCTION();
+
+			if (useMSAA) {
+				// MSAA: resolve the multisampled scene colour into the single-sample
+				// screen copy for refraction. The depth behind the water is the scene
+				// depth before the water pass, which is already resolved into
+				// renderDepthResolveImage (GetWaterRefractionDepthImage()), so no depth
+				// copy happens here. Layouts on exit match the 1x path: the screen copy
+				// is SHADER_READ for sampling and the scene colour is back in
+				// SHADER_READ for the water pass's COLOR_ATTACHMENT transition.
+				VkImage srcColor = renderColorImage->GetImage();    // multisampled, SHADER_READ
+				VkImage dstColor = screenCopyColorImage->GetImage(); // single-sample
+
+				VkImageMemoryBarrier pre[2]{};
+				pre[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				pre[0].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				pre[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				pre[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[0].image = srcColor;
+				pre[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+				pre[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+				pre[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+				pre[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				pre[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				pre[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				pre[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				pre[1].image = dstColor;
+				pre[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+				pre[1].srcAccessMask = 0;
+				pre[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+				vkCmdPipelineBarrier(commandBuffer,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					0, 0, nullptr, 0, nullptr, 2, pre);
+
+				VkImageResolve region{};
+				region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+				region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+				region.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
+				vkCmdResolveImage(commandBuffer,
+					srcColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					dstColor, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+				VkImageMemoryBarrier post[2]{};
+				post[0] = pre[1];
+				post[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				post[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				post[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+				post[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+				post[1] = pre[0];
+				post[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				post[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				post[1].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+				post[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+				vkCmdPipelineBarrier(commandBuffer,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					0, 0, nullptr, 0, nullptr, 2, post);
+				return;
+			}
 
 			// Transition source images to TRANSFER_SRC_OPTIMAL
 			VkImageMemoryBarrier srcBarriers[2]{};
