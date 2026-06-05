@@ -127,13 +127,17 @@ namespace spades {
 				renderColorResolveImage->CreateSampler(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
 				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 
+				// Resolved depth is stored as R32_SFLOAT *colour* (the raw sample-0
+				// depth value), filled by VulkanDepthResolveFilter. Depth-reading
+				// filters sample it as a normal sampler2D and read .r, exactly as they
+				// do the real depth image at 1x — see DepthResolve.vk.fs.
 				renderDepthResolveImage = Handle<VulkanImage>::New(
-				    device, renderWidth, renderHeight, fbDepthFormat,
+				    device, renderWidth, renderHeight, VK_FORMAT_R32_SFLOAT,
 				    VK_IMAGE_TILING_OPTIMAL,
-				    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+				    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 				        VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-				renderDepthResolveImage->CreateImageView(VK_IMAGE_ASPECT_DEPTH_BIT);
+				renderDepthResolveImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
 				renderDepthResolveImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 			}
