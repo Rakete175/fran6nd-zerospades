@@ -85,10 +85,24 @@ namespace spades {
 			VkFormat fbColorFormat;
 			VkFormat fbDepthFormat;
 
+			// MSAA sample count for the scene attachments (1 = MSAA off). When > 1
+			// the scene renders to multisampled colour/depth and is resolved into the
+			// single-sample *Resolve images below before post-processing.
+			VkSampleCountFlagBits sampleCount;
+			bool useMSAA;
+
 			// Main render framebuffer
 			VkFramebuffer renderFramebuffer;
 			Handle<VulkanImage> renderColorImage;
 			Handle<VulkanImage> renderDepthImage;
+
+			// Single-sample resolve targets for the scene attachments. Only created
+			// when useMSAA; the post-process chain and any code that *reads* the
+			// finished scene samples these instead of the multisampled attachments
+			// (which can't be linearly sampled). When MSAA is off these stay null and
+			// GetResolved*Image() falls back to the render images.
+			Handle<VulkanImage> renderColorResolveImage;
+			Handle<VulkanImage> renderDepthResolveImage;
 
 			// Mirror framebuffer for water reflections
 			VkFramebuffer mirrorFramebuffer;
@@ -122,8 +136,32 @@ namespace spades {
 
 			void MakeSureAllBuffersReleased();
 
+			// Raw scene attachments (multisampled when useMSAA). Used as render-pass
+			// attachments and for the scene-pass layout barriers — NOT for sampling.
 			Handle<VulkanImage> GetDepthImage() { return renderDepthImage; }
 			Handle<VulkanImage> GetColorImage() { return renderColorImage; }
+
+			// Single-sample views of the finished scene for everything downstream
+			// (post-process, water screen copy, framebuffer readback). Identical to
+			// GetColorImage()/GetDepthImage() when MSAA is off.
+			Handle<VulkanImage> GetResolvedColorImage() {
+				return useMSAA ? renderColorResolveImage : renderColorImage;
+			}
+			Handle<VulkanImage> GetResolvedDepthImage() {
+				return useMSAA ? renderDepthResolveImage : renderDepthImage;
+			}
+			bool IsMSAA() const { return useMSAA; }
+			VkSampleCountFlagBits GetSampleCount() const { return sampleCount; }
+
+			// Resolves the multisampled scene colour into renderColorResolveImage
+			// (single-sample), which the post-process chain then samples. No-op when
+			// MSAA is off. Call once after all scene passes (main + water + sprites)
+			// and before post-processing. `currentColorLayout` is the layout the
+			// multisampled colour attachment is in at call time; the resolved image
+			// is left in SHADER_READ_ONLY_OPTIMAL. Depth is resolved separately by
+			// VulkanDepthResolveFilter.
+			void ResolveScene(VkCommandBuffer commandBuffer, VkImageLayout currentColorLayout);
+
 			VkFormat GetMainColorFormat() { return fbColorFormat; }
 			VkRenderPass GetRenderPass() { return renderPass; }
 			VkRenderPass GetWaterRenderPass() { return waterRenderPass; }

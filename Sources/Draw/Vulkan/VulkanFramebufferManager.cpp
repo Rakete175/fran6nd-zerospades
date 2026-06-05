@@ -53,6 +53,12 @@ namespace spades {
 			useHdr = (bool)(int)r_hdr;
 			useSRGB = (bool)(int)r_srgb;
 
+			// MSAA sample count for the scene attachments, resolved (and clamped to
+			// hardware support) once at device creation. > 1 enables the multisample
+			// scene + resolve path; 1 keeps the original single-sample path.
+			sampleCount = device->GetSampleCount();
+			useMSAA = sampleCount > VK_SAMPLE_COUNT_1_BIT;
+
 			// Determine color format
 			if (useSRGB) {
 				SPLog("Using SRGB color format");
@@ -92,7 +98,7 @@ namespace spades {
 			    VK_IMAGE_TILING_OPTIMAL,
 			    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 			        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sampleCount);
 			renderColorImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
 			renderColorImage->CreateSampler(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
 			                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
@@ -102,10 +108,35 @@ namespace spades {
 			    VK_IMAGE_TILING_OPTIMAL,
 			    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 			        VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sampleCount);
 			renderDepthImage->CreateImageView(VK_IMAGE_ASPECT_DEPTH_BIT);
 			renderDepthImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 			                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
+
+			// Single-sample resolve targets sampled by the post-process chain. Color
+			// is filled by vkCmdResolveImage; depth by a small depth-resolve pass
+			// (see VulkanDepthResolveFilter). Only needed when multisampling.
+			if (useMSAA) {
+				renderColorResolveImage = Handle<VulkanImage>::New(
+				    device, renderWidth, renderHeight, fbColorFormat,
+				    VK_IMAGE_TILING_OPTIMAL,
+				    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+				        VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+				renderColorResolveImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
+				renderColorResolveImage->CreateSampler(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
+
+				renderDepthResolveImage = Handle<VulkanImage>::New(
+				    device, renderWidth, renderHeight, fbDepthFormat,
+				    VK_IMAGE_TILING_OPTIMAL,
+				    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+				        VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+				renderDepthResolveImage->CreateImageView(VK_IMAGE_ASPECT_DEPTH_BIT);
+				renderDepthResolveImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
+				                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
+			}
 
 			VkImageView attachments[] = {
 			    renderColorImage->GetImageView(),
@@ -154,12 +185,17 @@ namespace spades {
 			// r_water >= 2: mirror images filled via reflected scene rendering
 			{
 				SPLog("Creating mirror framebuffer for water reflections");
+				// Mirror attachments must match the scene sample count: reflections
+				// (r_water >= 2) are drawn with the same scene pipelines, which are
+				// built against the multisampled scene render pass. When MSAA is on
+				// the water shader samples the resolved mirror images instead (filled
+				// alongside the scene resolve).
 				mirrorColorImage = Handle<VulkanImage>::New(
 				    device, renderWidth, renderHeight, fbColorFormat,
 				    VK_IMAGE_TILING_OPTIMAL,
 				    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-				        VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+				        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sampleCount);
 				mirrorColorImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
 				mirrorColorImage->CreateSampler(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
 				                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
@@ -167,8 +203,9 @@ namespace spades {
 				mirrorDepthImage = Handle<VulkanImage>::New(
 				    device, renderWidth, renderHeight, fbDepthFormat,
 				    VK_IMAGE_TILING_OPTIMAL,
-				    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+				    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+				        VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+				    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sampleCount);
 				mirrorDepthImage->CreateImageView(VK_IMAGE_ASPECT_DEPTH_BIT);
 				mirrorDepthImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 				                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
@@ -271,7 +308,7 @@ namespace spades {
 
 			VkAttachmentDescription colorAttachment = {};
 			colorAttachment.format = fbColorFormat;
-			colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+			colorAttachment.samples = sampleCount;
 			colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 			colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 			colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -281,7 +318,7 @@ namespace spades {
 
 			VkAttachmentDescription depthAttachment = {};
 			depthAttachment.format = fbDepthFormat;
-			depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+			depthAttachment.samples = sampleCount;
 			depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 			depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 			depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -436,6 +473,75 @@ namespace spades {
 
 			vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			vkCmdEndRenderPass(commandBuffer);
+		}
+
+		void VulkanFramebufferManager::ResolveScene(VkCommandBuffer commandBuffer,
+		                                            VkImageLayout currentColorLayout) {
+			SPADES_MARK_FUNCTION();
+
+			if (!useMSAA)
+				return; // single-sample: post-process reads renderColorImage directly
+
+			VkImage msColor = renderColorImage->GetImage();
+			VkImage resolved = renderColorResolveImage->GetImage();
+
+			// Multisampled colour: currentColorLayout -> TRANSFER_SRC.
+			VkImageMemoryBarrier toSrc{};
+			toSrc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			toSrc.oldLayout = currentColorLayout;
+			toSrc.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			toSrc.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toSrc.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toSrc.image = msColor;
+			toSrc.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			toSrc.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+			toSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			// Resolve destination: UNDEFINED -> TRANSFER_DST (previous contents unneeded).
+			VkImageMemoryBarrier toDst{};
+			toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toDst.image = resolved;
+			toDst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			toDst.srcAccessMask = 0;
+			toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			VkImageMemoryBarrier pre[2] = {toSrc, toDst};
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0, 0, nullptr, 0, nullptr, 2, pre);
+
+			VkImageResolve region{};
+			region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			region.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
+			vkCmdResolveImage(commandBuffer,
+				msColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				1, &region);
+
+			// Resolved colour: TRANSFER_DST -> SHADER_READ_ONLY for the post-process chain.
+			VkImageMemoryBarrier toRead{};
+			toRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toRead.image = resolved;
+			toRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0, 0, nullptr, 0, nullptr, 1, &toRead);
+
+			// Leave renderColorImage in TRANSFER_SRC; the renderer's image-state
+			// tracking treats the resolved image as the post-process input from here.
 		}
 
 		void VulkanFramebufferManager::CopyToMirrorImage(VkCommandBuffer commandBuffer,
