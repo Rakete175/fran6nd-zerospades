@@ -80,5 +80,13 @@ void main() {
     color = mix(color, smoothstep(0.0, 1.0, color), enhancement);
 
     // Output linear; sRGB swapchain blit will encode for display.
-    outColor = vec4(color * color, 1.0);
+    vec3 outRgb = color * color;
+
+    // Guard against NaN/Inf reaching the swapchain. A stray NaN from an earlier
+    // shader (e.g. a divide-by-zero at a silhouette) would otherwise display as a
+    // garbage magenta texel — very visible on high-contrast edges when no post-AA
+    // smears it away. isnan/isinf both map such values back to black, and the
+    // clamp keeps negatives/overflow in range.
+    outRgb = mix(outRgb, vec3(0.0), vec3(isnan(outRgb)) + vec3(isinf(outRgb)));
+    outColor = vec4(max(outRgb, vec3(0.0)), 1.0);
 }
