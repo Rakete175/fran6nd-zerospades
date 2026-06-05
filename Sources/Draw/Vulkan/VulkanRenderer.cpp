@@ -44,6 +44,7 @@
 #include "VulkanDepthOfFieldFilter.h"
 #include "VulkanFXAAFilter.h"
 #include "VulkanCavityOutlineFilter.h"
+#include "VulkanDepthResolveFilter.h"
 #include "VulkanColorCorrectionFilter.h"
 #include "VulkanLensFlareFilter.h"
 #include "VulkanAmbientShadowRenderer.h"
@@ -181,6 +182,8 @@ namespace spades {
 			cavityOutlineFilter = stmp::make_unique<VulkanCavityOutlineFilter>(*this);
 			colorCorrectionFilter = stmp::make_unique<VulkanColorCorrectionFilter>(*this);
 			lensFlareFilter = stmp::make_unique<VulkanLensFlareFilter>(*this);
+			if (framebufferManager->IsMSAA())
+				depthResolveFilter = stmp::make_unique<VulkanDepthResolveFilter>(*this);
 
 			inited = true;
 			lastSwapchainGeneration = device->GetSwapchainGeneration();
@@ -224,6 +227,7 @@ namespace spades {
 			lensFlareFilter.reset();
 			colorCorrectionFilter.reset();
 			cavityOutlineFilter.reset();
+			depthResolveFilter.reset();
 			fxaaFilter.reset();
 			depthOfFieldFilter.reset();
 			fogFilter.reset();

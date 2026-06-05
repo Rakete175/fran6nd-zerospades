@@ -62,6 +62,7 @@ namespace spades {
 		class VulkanDepthOfFieldFilter;
 		class VulkanFXAAFilter;
 		class VulkanCavityOutlineFilter;
+		class VulkanDepthResolveFilter;
 		class VulkanColorCorrectionFilter;
 		class VulkanLensFlareFilter;
 		class VulkanAmbientShadowRenderer;
@@ -163,6 +164,10 @@ namespace spades {
 		std::unique_ptr<VulkanCavityOutlineFilter> cavityOutlineFilter;
 		std::unique_ptr<VulkanColorCorrectionFilter> colorCorrectionFilter;
 		std::unique_ptr<VulkanLensFlareFilter> lensFlareFilter;
+		// MSAA only: resolves the multisampled scene depth into the single-sample
+		// R32F resolved-depth image that soft sprites, water and the depth-reading
+		// post filters sample. Null when MSAA is off.
+		std::unique_ptr<VulkanDepthResolveFilter> depthResolveFilter;
 
 			Handle<VulkanImage> whiteImage; // 1x1 white image for solid color rendering
 
