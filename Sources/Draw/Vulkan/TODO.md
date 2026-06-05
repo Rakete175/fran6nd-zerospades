@@ -19,9 +19,11 @@ rough/aliased because the Vulkan path has **no AA at all** beyond FXAA.
             works at every `r_water` level under MSAA, and its surface is AA'd.
       - [x] **Soft particles + MSAA** — read the resolved depth (resolved once
             after the opaque pass and reused everywhere).
-      - [ ] **Setup-menu capability** — reflect the device's max usable MSAA
-            level in the startup config UI (grey out unsupported levels) via
-            `CheckConfigCapability`. No feature *incompatibilities* remain.
+      - [x] **Setup-menu capability** — the startup Vulkan probe reports the
+            device's max usable MSAA level and `CheckConfigCapability` greys out
+            unsupported `r_multisamples` options (Vulkan only); the renderer
+            clamps down at runtime as a backstop. No feature *incompatibilities*
+            remain.
 - [ ] **Temporal AA** — `GLTemporalAAFilter` not ported.
 
 ## Post-processing filters
