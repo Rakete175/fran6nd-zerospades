@@ -77,6 +77,7 @@ SPADES_SETTING(r_occlusionQuery);
 SPADES_SETTING(r_depthOfField);
 SPADES_SETTING(r_vsync);
 SPADES_SETTING(r_renderer);
+SPADES_SETTING(r_vulkan);
 SPADES_SETTING(r_swUndersampling);
 SPADES_SETTING(r_hdr);
 SPADES_SETTING(r_temporalAA);
@@ -695,10 +696,25 @@ namespace spades {
 						AddReport();
 					}
 
+					// Highest MSAA level usable for the offscreen scene across the
+					// enumerated GPUs (colour ∩ depth attachment sample counts). Used
+					// to grey out unsupported r_multisamples options in the UI. We take
+					// the max across devices to avoid greying a level the actually-
+					// selected GPU supports; the renderer clamps down at runtime anyway.
+					uint32_t probeMaxSamples = 1;
+
 					for (uint32_t i = 0; i < devCount; ++i) {
 						VkPhysicalDevice pd = gpus[i];
 						VkPhysicalDeviceProperties props{};
 						vkGetPhysicalDeviceProperties(pd, &props);
+
+						VkSampleCountFlags sc = props.limits.framebufferColorSampleCounts &
+						                        props.limits.framebufferDepthSampleCounts;
+						uint32_t devMax = 1;
+						if (sc & VK_SAMPLE_COUNT_8_BIT) devMax = 8;
+						else if (sc & VK_SAMPLE_COUNT_4_BIT) devMax = 4;
+						else if (sc & VK_SAMPLE_COUNT_2_BIT) devMax = 2;
+						if (devMax > probeMaxSamples) probeMaxSamples = devMax;
 
 						uint32_t v = props.apiVersion;
 						std::string apiStr = std::to_string(VK_VERSION_MAJOR(v)) + "." +
@@ -754,6 +770,24 @@ namespace spades {
 #endif
 						AddReport();
 					}
+
+					// Grey out MSAA levels the GPU can't do (only when the Vulkan
+					// renderer is active; the GL path manages its own AA capability).
+					if (probeMaxSamples > 1)
+						SPLog("Vulkan: max usable MSAA level %ux", probeMaxSamples);
+					incapableConfigs.insert(
+					  std::make_pair("r_multisamples", [probeMaxSamples](std::string value) -> std::string {
+						  if ((int)r_vulkan == 0)
+							  return std::string();
+						  int v = 0;
+						  try { v = std::stoi(value); } catch (...) { v = 0; }
+						  if (v > (int)probeMaxSamples) {
+							  return "This anti-aliasing level is not supported by your GPU (maximum " +
+							         std::to_string(probeMaxSamples) + "x MSAA).";
+						  }
+						  return std::string();
+					  }));
+
 					vkDestroyInstance(vkProbe, nullptr);
 				} else {
 					SPLog("Vulkan probe instance creation failed");
