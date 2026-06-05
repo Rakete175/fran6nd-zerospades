@@ -43,6 +43,7 @@ namespace spades {
 			uint32_t arrayLayers;
 			uint32_t mipLevels;
 			VkFormat format;
+			VkSampleCountFlagBits samples;
 			VkImageLayout currentLayout;
 
 			bool ownsImage; // If false, image is owned externally (e.g., swapchain)
@@ -51,10 +52,14 @@ namespace spades {
 			~VulkanImage();
 
 		public:
-			// Create image with memory allocation
+			// Create image with memory allocation. `samples` > 1 makes the image
+			// multisampled (MSAA render target); such images can only be used as
+			// attachments and read via texelFetch on a sampler2DMS — they cannot be
+			// linearly sampled, copied, or blitted.
 			VulkanImage(Handle<gui::SDLVulkanDevice> device, uint32_t width, uint32_t height,
 			            VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
-			            VkMemoryPropertyFlags properties);
+			            VkMemoryPropertyFlags properties,
+			            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
 
 			// Create 2D array image with memory allocation
 			VulkanImage(Handle<gui::SDLVulkanDevice> device, uint32_t width, uint32_t height,
@@ -72,6 +77,7 @@ namespace spades {
 			uint32_t GetWidth() const { return width; }
 			uint32_t GetHeight() const { return height; }
 			VkFormat GetFormat() const { return format; }
+			VkSampleCountFlagBits GetSampleCount() const { return samples; }
 			VkImageLayout GetCurrentLayout() const { return currentLayout; }
 			Handle<gui::SDLVulkanDevice> GetDevice() const { return device; }
 			uint32_t GetArrayLayers() const { return arrayLayers; }
