@@ -72,6 +72,20 @@ SPADES_SETTING(r_outlines);
 SPADES_SETTING(r_colorCorrection);
 SPADES_SETTING(r_lensFlare);
 
+namespace {
+	// Sky pipeline push constants, shared between the pipeline layout (range size)
+	// and the draw call so both derive from one sizeof(). std140-style vec3→16
+	// padding via the trailing _pad floats.
+	struct SkyPushConstants {
+		float fogColor[3];      float _pad0;
+		float viewAxisFront[3]; float _pad1;
+		float viewAxisUp[3];    float _pad2;
+		float viewAxisSide[3];  float _pad3;
+		float fovX;
+		float fovY;
+	};
+} // namespace
+
 namespace spades {
 	namespace draw {
 
@@ -2698,7 +2712,7 @@ namespace spades {
 			VkPushConstantRange pushConstantRange{};
 			pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 			pushConstantRange.offset = 0;
-			pushConstantRange.size = sizeof(float) * 18;  // fogColor(3+1) + 3 view axes(3+1 each) + fovX + fovY
+			pushConstantRange.size = sizeof(SkyPushConstants);
 
 			VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 			pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2988,18 +3002,7 @@ namespace spades {
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyPipeline);
 
 			// Push constants: fogColor, viewAxisFront, viewAxisUp, viewAxisSide, fovX, fovY
-			struct SkyPushConstants {
-				float fogColor[3];
-				float _pad0;
-				float viewAxisFront[3];
-				float _pad1;
-				float viewAxisUp[3];
-				float _pad2;
-				float viewAxisSide[3];
-				float _pad3;
-				float fovX;
-				float fovY;
-			} pushConstants;
+			SkyPushConstants pushConstants;
 
 			// Sky uses the actual fog color, not the shadow-modified one.
 			// Linearize so it matches the convention used by BasicMap/BasicModel
@@ -3168,7 +3171,7 @@ namespace spades {
 			VkPushConstantRange pcRange{};
 			pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 			pcRange.offset = 0;
-			pcRange.size = sizeof(float) * 16; // mat4
+			pcRange.size = sizeof(Matrix4);
 
 			VkPipelineLayoutCreateInfo layoutInfo{};
 			layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -3253,7 +3256,7 @@ namespace spades {
 
 			const Matrix4& mvp = GetProjectionViewMatrix();
 			vkCmdPushConstants(commandBuffer, debugLinePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-			                   0, sizeof(float) * 16, &mvp);
+			                   0, sizeof(Matrix4), &mvp);
 
 			VkBuffer vb = vertexBuffer->GetBuffer();
 			VkDeviceSize offset = 0;
