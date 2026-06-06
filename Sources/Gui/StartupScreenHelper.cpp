@@ -313,6 +313,14 @@ namespace spades {
 				if (maxVaryingComponents > 0)
 					SPLog("Max Varying Components: %d", (int)maxVaryingComponents);
 
+				// Highest MSAA level the GL multisample framebuffer can use, to grey
+				// out unsupported r_multisamples options for the GL renderer.
+				GLint maxGLSamples = 1;
+				glGetIntegerv(GL_MAX_SAMPLES, &maxGLSamples);
+				if (maxGLSamples < 1)
+					maxGLSamples = 1;
+				SPLog("Max MSAA Samples (GL): %d", (int)maxGLSamples);
+
 				str = (const char*)glGetString(GL_EXTENSIONS);
 				std::string extensions;
 				if (str)
@@ -600,6 +608,22 @@ namespace spades {
 						SPLog("Disabling shaded particle: too small GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS");
 					}
 				}
+
+				// Grey out MSAA levels above GL_MAX_SAMPLES for the GL renderer
+				// (only when Vulkan is not active; the Vulkan probe registers its own
+				// r_multisamples check gated on r_vulkan).
+				incapableConfigs.insert(
+				  std::make_pair("r_multisamples", [maxGLSamples](std::string value) -> std::string {
+					  if ((int)r_vulkan != 0)
+						  return std::string();
+					  int v = 0;
+					  try { v = std::stoi(value); } catch (...) { v = 0; }
+					  if (v > (int)maxGLSamples) {
+						  return "This anti-aliasing level is not supported by your GPU (maximum " +
+						         std::to_string((int)maxGLSamples) + "x MSAA).";
+					  }
+					  return std::string();
+				  }));
 
 				AddReport();
 

@@ -136,13 +136,13 @@ namespace spades {
 
 				// TODO: Add r_temporalAA when it's more complete
 				cfg.AddRow(StartupScreenConfigSelectItemEditor(
-					ui, StartupScreenGraphicsAntialiasConfig(ui), "0|2|4|fxaa",
+					ui, StartupScreenGraphicsAntialiasConfig(ui), "0|2|4|8|fxaa",
 					_Tr("StartupScreen",
 						"Antialiasing:Enables a technique to improve the appearance of high-contrast edges.\n\n"
 						"MSAA: Performs antialiasing by generating an intermediate high-resolution image. "
 						"Looks best, but doesn't cope with some settings.\n\n"
 						"FXAA: Performs antialiasing by smoothing artifacts out as a post-process.|"
-						"Off|MSAA 2x|4x|FXAA")));
+						"Off|MSAA 2x|4x|8x|FXAA")));
 
 				cfg.AddRow(StartupScreenConfigCheckItemEditor(
 					ui, StartupScreenConfig(ui, "r_radiosity"), "0", "1",
@@ -278,13 +278,13 @@ namespace spades {
 				StartupScreenConfigView cfg(Manager);
 
 				cfg.AddRow(StartupScreenConfigSelectItemEditor(
-					ui, StartupScreenGraphicsAntialiasConfig(ui), "0|2|4|fxaa",
+					ui, StartupScreenGraphicsAntialiasConfig(ui), "0|2|4|8|fxaa",
 					_Tr("StartupScreen",
 						"Antialiasing:Enables a technique to improve the appearance of high-contrast edges.\n\n"
 						"MSAA: Performs antialiasing by generating an intermediate high-resolution image. "
 						"Looks best, but doesn't cope with some settings.\n\n"
 						"FXAA: Performs antialiasing by smoothing artifacts out as a post-process.|"
-						"Off|MSAA 2x|4x|FXAA")));
+						"Off|MSAA 2x|4x|8x|FXAA")));
 
 				cfg.AddRow(StartupScreenConfigCheckItemEditor(
 					ui, StartupScreenConfig(ui, "r_radiosity"), "0", "1",
