@@ -81,9 +81,6 @@ namespace spades {
 		  inited(false),
 		  sceneUsedInThisFrame(false),
 		  renderPass(VK_NULL_HANDLE),
-		  depthImage(VK_NULL_HANDLE),
-		  depthImageMemory(VK_NULL_HANDLE),
-		  depthImageView(VK_NULL_HANDLE),
 		  currentImageIndex(0),
 		  currentFrameSlot(0),
 		  imageAvailableSemaphore(VK_NULL_HANDLE),
@@ -131,9 +128,7 @@ namespace spades {
 			// Create framebuffer manager for offscreen rendering
 			framebufferManager = stmp::make_unique<VulkanFramebufferManager>(device, renderWidth, renderHeight);
 
-			depthFormat = FindDepthFormat();
 			CreateRenderPass();  // Must create render pass before framebuffers
-			CreateDepthResources();  // Create depth buffer for 3D rendering
 			CreateFramebuffers();
 				CreateCommandBuffers();
 			CreateSkyPipeline();
@@ -301,44 +296,34 @@ namespace spades {
 			colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 			colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-			// Depth attachment
-			VkAttachmentDescription depthAttachment{};
-			depthAttachment.format = depthFormat;
-			depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-			depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-			depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-			depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
+			// No depth attachment: this pass only composites 2D (multiply-colour
+			// tints + UI), none of which test or write depth. A depth attachment
+			// here would be shared by every swapchain framebuffer and thus by
+			// concurrent in-flight frames (a cross-frame depth hazard), and would
+			// force every pipeline in the pass to supply pDepthStencilState. The
+			// 3D scene has its own depth in the framebuffer manager.
 			VkAttachmentReference colorAttachmentRef{};
 			colorAttachmentRef.attachment = 0;
 			colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-			VkAttachmentReference depthAttachmentRef{};
-			depthAttachmentRef.attachment = 1;
-			depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
 			VkSubpassDescription subpass{};
 			subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 			subpass.colorAttachmentCount = 1;
 			subpass.pColorAttachments = &colorAttachmentRef;
-			subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
 			VkSubpassDependency dependency{};
 			dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 			dependency.dstSubpass = 0;
-			dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+			dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 			// Include source access for presentation to properly synchronize with previous frame
 			dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-			dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-			dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+			dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-			VkAttachmentDescription attachments[] = {colorAttachment, depthAttachment};
+			VkAttachmentDescription attachments[] = {colorAttachment};
 			VkRenderPassCreateInfo renderPassInfo{};
 			renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-			renderPassInfo.attachmentCount = 2;
+			renderPassInfo.attachmentCount = 1;
 			renderPassInfo.pAttachments = attachments;
 			renderPassInfo.subpassCount = 1;
 			renderPassInfo.pSubpasses = &subpass;
@@ -354,7 +339,7 @@ namespace spades {
 			// image is still UNDEFINED (first use) or PRESENT_SRC_KHR (after a prior
 			// present) rather than COLOR_ATTACHMENT_OPTIMAL. LOADing it would be a
 			// layout mismatch, so clear the colour from an UNDEFINED initial layout.
-			VkAttachmentDescription attachments2D[] = {colorAttachment, depthAttachment};
+			VkAttachmentDescription attachments2D[] = {colorAttachment};
 			attachments2D[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 			attachments2D[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -367,24 +352,7 @@ namespace spades {
 			}
 		}
 
-		VkFormat VulkanRenderer::FindDepthFormat() {
-		static const VkFormat candidates[] = {
-			VK_FORMAT_D32_SFLOAT,
-			VK_FORMAT_D24_UNORM_S8_UINT,
-			VK_FORMAT_D16_UNORM,
-		};
-
-		VkPhysicalDevice physDevice = device->GetPhysicalDevice();
-		for (VkFormat fmt : candidates) {
-			VkFormatProperties props;
-			vkGetPhysicalDeviceFormatProperties(physDevice, fmt, &props);
-			if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
-				return fmt;
-		}
-		SPRaise("Failed to find a supported depth format");
-	}
-
-	uint32_t VulkanRenderer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+		uint32_t VulkanRenderer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 			VkPhysicalDeviceMemoryProperties memProperties;
 			vkGetPhysicalDeviceMemoryProperties(device->GetPhysicalDevice(), &memProperties);
 
@@ -423,81 +391,6 @@ namespace spades {
 			SPRaise("Failed to find suitable memory type");
 		}
 
-		void VulkanRenderer::CreateDepthResources() {
-			SPADES_MARK_FUNCTION();
-
-			VkExtent2D swapchainExtent = device->GetSwapchainExtent();
-
-			// Create depth image with transient attachment flag
-			// This allows GPUs to potentially avoid allocating memory for depth data
-			// that doesn't need to persist between render passes
-			VkImageCreateInfo imageInfo{};
-			imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-			imageInfo.imageType = VK_IMAGE_TYPE_2D;
-			imageInfo.extent.width = swapchainExtent.width;
-			imageInfo.extent.height = swapchainExtent.height;
-			imageInfo.extent.depth = 1;
-			imageInfo.mipLevels = 1;
-			imageInfo.arrayLayers = 1;
-			imageInfo.format = depthFormat;
-			imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-			imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-			                  VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
-			imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-			imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-			VkResult result = vkCreateImage(device->GetDevice(), &imageInfo, nullptr, &depthImage);
-			if (result != VK_SUCCESS) {
-				SPRaise("Failed to create depth image (error code: %d)", result);
-			}
-
-			// Allocate memory for depth image
-			// Try lazily allocated memory first (optimal for transient attachments),
-			// fall back to device local if not supported.
-			// Always use dedicated allocation to avoid MoltenVK placement heap
-			// assertions on Intel GPUs.
-			VkMemoryRequirements memRequirements;
-			vkGetImageMemoryRequirements(device->GetDevice(), depthImage, &memRequirements);
-
-			VkMemoryDedicatedAllocateInfo dedicatedAllocInfo{};
-			dedicatedAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
-			dedicatedAllocInfo.image = depthImage;
-
-			VkMemoryAllocateInfo allocInfo{};
-			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-			allocInfo.allocationSize = memRequirements.size;
-			allocInfo.memoryTypeIndex = FindMemoryTypeWithFallback(
-				memRequirements.memoryTypeBits,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-			allocInfo.pNext = &dedicatedAllocInfo;
-
-			result = vkAllocateMemory(device->GetDevice(), &allocInfo, nullptr, &depthImageMemory);
-			if (result != VK_SUCCESS) {
-				SPRaise("Failed to allocate depth image memory (error code: %d)", result);
-			}
-
-			vkBindImageMemory(device->GetDevice(), depthImage, depthImageMemory, 0);
-
-			// Create depth image view
-			VkImageViewCreateInfo viewInfo{};
-			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-			viewInfo.image = depthImage;
-			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-			viewInfo.format = depthFormat;
-			viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-			viewInfo.subresourceRange.baseMipLevel = 0;
-			viewInfo.subresourceRange.levelCount = 1;
-			viewInfo.subresourceRange.baseArrayLayer = 0;
-			viewInfo.subresourceRange.layerCount = 1;
-
-			result = vkCreateImageView(device->GetDevice(), &viewInfo, nullptr, &depthImageView);
-			if (result != VK_SUCCESS) {
-				SPRaise("Failed to create depth image view (error code: %d)", result);
-			}
-		}
-
 		void VulkanRenderer::CreateFramebuffers() {
 			SPADES_MARK_FUNCTION();
 
@@ -508,14 +401,13 @@ namespace spades {
 
 			for (size_t i = 0; i < swapchainImageViews.size(); i++) {
 				VkImageView attachments[] = {
-					swapchainImageViews[i],
-					depthImageView
+					swapchainImageViews[i]
 				};
 
 				VkFramebufferCreateInfo framebufferInfo{};
 				framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 				framebufferInfo.renderPass = renderPass;
-				framebufferInfo.attachmentCount = 2;
+				framebufferInfo.attachmentCount = 1;
 				framebufferInfo.pAttachments = attachments;
 				framebufferInfo.width = swapchainExtent.width;
 				framebufferInfo.height = swapchainExtent.height;
@@ -564,20 +456,6 @@ namespace spades {
 				}
 			}
 			swapchainFramebuffers.clear();
-
-			// Cleanup depth resources
-			if (depthImageView != VK_NULL_HANDLE && vkDevice != VK_NULL_HANDLE) {
-				vkDestroyImageView(vkDevice, depthImageView, nullptr);
-				depthImageView = VK_NULL_HANDLE;
-			}
-			if (depthImage != VK_NULL_HANDLE && vkDevice != VK_NULL_HANDLE) {
-				vkDestroyImage(vkDevice, depthImage, nullptr);
-				depthImage = VK_NULL_HANDLE;
-			}
-			if (depthImageMemory != VK_NULL_HANDLE && vkDevice != VK_NULL_HANDLE) {
-				vkFreeMemory(vkDevice, depthImageMemory, nullptr);
-				depthImageMemory = VK_NULL_HANDLE;
-			}
 
 			DestroyDlightCookieResources();
 
@@ -628,27 +506,11 @@ namespace spades {
 		}
 		swapchainFramebuffers.clear();
 
-		// Destroy depth resources (extent-dependent).
-		depthImageWrapper = nullptr; // release Handle before destroying the underlying VkImage
-		if (depthImageView != VK_NULL_HANDLE) {
-			vkDestroyImageView(vkDevice, depthImageView, nullptr);
-			depthImageView = VK_NULL_HANDLE;
-		}
-		if (depthImage != VK_NULL_HANDLE) {
-			vkDestroyImage(vkDevice, depthImage, nullptr);
-			depthImage = VK_NULL_HANDLE;
-		}
-		if (depthImageMemory != VK_NULL_HANDLE) {
-			vkFreeMemory(vkDevice, depthImageMemory, nullptr);
-			depthImageMemory = VK_NULL_HANDLE;
-		}
-
 		// Pull new dimensions from the swapchain.
 		renderWidth = device->ScreenWidth();
 		renderHeight = device->ScreenHeight();
 
 		// Rebuild swapchain-dependent renderer resources.
-		CreateDepthResources();
 		CreateFramebuffers();
 		CreateCommandBuffers();
 
@@ -2667,12 +2529,10 @@ namespace spades {
 
 		// Begin swapchain render pass for 2D UI rendering.
 		// Scene frames LOAD the blitted scene colour (swapchain already in
-		// COLOR_ATTACHMENT_OPTIMAL); 2D-only frames CLEAR from UNDEFINED via the
-		// renderPass2D variant. Both attachments need a clear value because the
-		// depth attachment always uses LOAD_OP_CLEAR (and colour does too in 2D).
-		VkClearValue swapchainClearValues[2]{};
-		swapchainClearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-		swapchainClearValues[1].depthStencil = {1.0f, 0};
+		// COLOR_ATTACHMENT_OPTIMAL, no clear needed); 2D-only frames CLEAR the
+		// colour from UNDEFINED via the renderPass2D variant.
+		VkClearValue swapchainClearValue{};
+		swapchainClearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
 
 		VkRenderPassBeginInfo swapchainRenderPassInfo{};
 		swapchainRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -2680,8 +2540,8 @@ namespace spades {
 		swapchainRenderPassInfo.framebuffer = swapchainFramebuffers[imageIndex];
 		swapchainRenderPassInfo.renderArea.offset = {0, 0};
 		swapchainRenderPassInfo.renderArea.extent = device->GetSwapchainExtent();
-		swapchainRenderPassInfo.clearValueCount = 2;
-		swapchainRenderPassInfo.pClearValues = swapchainClearValues;
+		swapchainRenderPassInfo.clearValueCount = sceneUsedInThisFrame ? 0 : 1;
+		swapchainRenderPassInfo.pClearValues = sceneUsedInThisFrame ? nullptr : &swapchainClearValue;
 
 		vkCmdBeginRenderPass(commandBuffer, &swapchainRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 

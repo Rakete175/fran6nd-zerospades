@@ -106,13 +106,6 @@ namespace spades {
 			VkRenderPass renderPass2D = VK_NULL_HANDLE;
 			std::vector<VkFramebuffer> swapchainFramebuffers;
 
-			// Depth buffer
-			VkFormat depthFormat;
-			VkImage depthImage;
-			VkDeviceMemory depthImageMemory;
-			VkImageView depthImageView;
-			Handle<VulkanImage> depthImageWrapper; // Wrapper for water renderer access
-
 			// Frame synchronization
 			uint32_t currentImageIndex;
 			uint32_t currentFrameSlot; // cycles 0..maxFramesInFlight-1, matches semaphore slots
@@ -225,13 +218,11 @@ namespace spades {
 
 			void InitializeVulkanResources();
 			void CreateRenderPass();
-			void CreateDepthResources();
 			void CreateFramebuffers();
 			void CreateCommandBuffers();
 			void CleanupVulkanResources();
 			void RecreateSwapchainDependencies();
 
-			VkFormat FindDepthFormat();
 			uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 			uint32_t FindMemoryTypeWithFallback(uint32_t typeFilter,
 			                                    VkMemoryPropertyFlags preferred,
@@ -312,8 +303,6 @@ namespace spades {
 			// get the 1x1 white fallback).
 			VkDescriptorSetLayout GetDlightCookieSetLayout();
 			VkDescriptorSet GetDlightCookieDescriptorSet(VulkanImage* cookieImage);
-			VulkanImage* GetDepthImageWrapper() { return depthImageWrapper.GetPointerOrNull(); }
-			VkImageView GetDepthImageView() const { return depthImageView; }
 			bool IsRenderingMirror() const { return renderingMirror; }
 		int GetRenderWidth() const { return renderWidth; }
 		int GetRenderHeight() const { return renderHeight; }
