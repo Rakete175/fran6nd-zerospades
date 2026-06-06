@@ -127,10 +127,9 @@ namespace spades {
 			if (device != VK_NULL_HANDLE) {
 				vkDeviceWaitIdle(device);
 
-				// Cleanup sync objects
+				// Cleanup per-frame sync objects. renderFinished semaphores are
+				// per swapchain image and destroyed by CleanupSwapchain below.
 				for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-					if (renderFinishedSemaphores[i] != VK_NULL_HANDLE)
-						vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 					if (imageAvailableSemaphores[i] != VK_NULL_HANDLE)
 						vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
 					if (inFlightFences[i] != VK_NULL_HANDLE)
@@ -735,6 +734,18 @@ namespace spades {
 			}
 
 			SPLog("Created %zu swapchain image views", swapchainImageViews.size());
+
+			// One renderFinished semaphore per swapchain image (see CreateSyncObjects).
+			// Tied to the swapchain lifecycle so a resize that changes the image count
+			// rebuilds them correctly.
+			renderFinishedSemaphores.resize(swapchainImages.size());
+			VkSemaphoreCreateInfo semaphoreInfo{};
+			semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+			for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
+				if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+					SPRaise("Failed to create renderFinished semaphore");
+				}
+			}
 		}
 
 		void SDLVulkanDevice::CreateCommandPool() {
@@ -752,8 +763,13 @@ namespace spades {
 		}
 
 		void SDLVulkanDevice::CreateSyncObjects() {
+			// imageAvailable semaphores and inFlightFences are per frame-in-flight.
+			// renderFinished semaphores are per swapchain image instead (created in
+			// CreateImageViews, destroyed in CleanupSwapchain): a binary semaphore
+			// waited on by vkQueuePresentKHR must not be re-signalled until that
+			// present's wait has drained, which is only guaranteed once the image is
+			// re-acquired — so the semaphore must follow the image, not the frame.
 			imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-			renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
 			inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 			imagesInFlight.resize(swapchainImages.size(), VK_NULL_HANDLE);
 
@@ -766,7 +782,6 @@ namespace spades {
 
 			for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 				if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-					vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
 					vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
 					SPRaise("Failed to create synchronization objects");
 				}
@@ -776,6 +791,13 @@ namespace spades {
 		}
 
 		void SDLVulkanDevice::CleanupSwapchain() {
+			// renderFinished semaphores are per swapchain image (see CreateSyncObjects).
+			for (auto sem : renderFinishedSemaphores) {
+				if (sem != VK_NULL_HANDLE)
+					vkDestroySemaphore(device, sem, nullptr);
+			}
+			renderFinishedSemaphores.clear();
+
 			for (auto imageView : swapchainImageViews) {
 				vkDestroyImageView(device, imageView, nullptr);
 			}
@@ -802,8 +824,10 @@ namespace spades {
 				SPRaise("Failed to acquire swapchain image");
 			}
 
+			// imageAvailable follows the frame-in-flight; renderFinished follows the
+			// acquired swapchain image (waited on by the matching vkQueuePresentKHR).
 			*outImageAvailableSemaphore = imageAvailableSemaphores[currentFrame];
-			*outRenderFinishedSemaphore = renderFinishedSemaphores[currentFrame];
+			*outRenderFinishedSemaphore = renderFinishedSemaphores[imageIndex];
 			return imageIndex;
 		}
 
