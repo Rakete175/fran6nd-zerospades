@@ -1108,6 +1108,13 @@ namespace spades {
 				// Swapchain was recreated, try again
 				currentImageIndex = device->AcquireNextImage(&imageAvailableSemaphore, &renderFinishedSemaphore);
 			}
+			// A second failure (e.g. repeated OUT_OF_DATE mid-resize, or a 0x0
+			// minimised window) leaves no valid image. EndScene/Flip detect the
+			// UINT32_MAX sentinel and drop the frame instead of indexing past the
+			// command-buffer / framebuffer arrays.
+			if (currentImageIndex == UINT32_MAX) {
+				SPLog("[VulkanRenderer::StartScene] No swapchain image acquired; dropping frame");
+			}
 
 			// The swapchain has more images than frame slots, and per-image resources
 			// (command buffer + the image renderer's descriptor pools / vertex buffers)
@@ -1206,6 +1213,26 @@ namespace spades {
 		void VulkanRenderer::EndScene() {
 			SPADES_MARK_FUNCTION();
 			EnsureSceneStarted();
+
+			// StartScene failed to acquire a swapchain image: there is nothing valid
+			// to record into. Drop the frame cleanly. The frame-slot fence was not
+			// reset (so the next StartScene wait returns immediately), and clearing
+			// sceneUsedInThisFrame routes Flip down its guarded 2D path rather than
+			// presenting an invalid image index.
+			if (currentImageIndex == UINT32_MAX || currentImageIndex >= commandBuffers.size()) {
+				// Discard the scene content queued this frame; it is normally
+				// consumed (and cleared) while recording the scene pass, which is
+				// skipped here. Without this, sustained drops (a resize storm) grow
+				// these lists unbounded.
+				debugLines.clear();
+				lights.clear();
+				if (modelRenderer) modelRenderer->Clear();
+				if (spriteRenderer) spriteRenderer->Clear();
+				if (longSpriteRenderer) longSpriteRenderer->Clear();
+				duringSceneRendering = false;
+				sceneUsedInThisFrame = false;
+				return;
+			}
 
 			if (sceneUsedInThisFrame) {
 				// Calculate delta time for animations
