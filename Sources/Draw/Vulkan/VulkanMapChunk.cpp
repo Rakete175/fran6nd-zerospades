@@ -398,16 +398,7 @@ namespace spades {
 			fogCol *= fogCol; // linearize
 
 			if (renderer.physicalLighting) {
-				struct {
-					Matrix4 projectionViewMatrix;
-					Vector3 modelOrigin;
-					float fogDistance;
-					Vector3 viewOrigin;
-					float _pad;
-					Vector3 fogColor;
-					float _pad2;
-					Matrix4 viewMatrix;
-				} pushConstants;
+				MapSolidPushConstants pushConstants;
 
 				pushConstants.projectionViewMatrix = renderer.renderer.GetProjectionViewMatrix();
 				pushConstants.modelOrigin = MakeVector3(
@@ -426,14 +417,7 @@ namespace spades {
 				                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				                   0, sizeof(pushConstants), &pushConstants);
 			} else {
-				struct {
-					Matrix4 projectionViewMatrix;
-					Vector3 modelOrigin;
-					float fogDistance;
-					Vector3 viewOrigin;
-					float _pad;
-					Vector3 fogColor;
-				} pushConstants;
+				MapSolidPushConstantsBasic pushConstants;
 
 				pushConstants.projectionViewMatrix = renderer.renderer.GetProjectionViewMatrix();
 				pushConstants.modelOrigin = MakeVector3(
@@ -587,22 +571,7 @@ namespace spades {
 					linearDir = dir / linearLength;
 			}
 
-			struct {
-				Matrix4 projectionViewMatrix;
-				Vector3 modelOrigin;
-				float fogDistance;
-				Vector3 viewOrigin;
-				float lightRadius;
-				Vector3 fogColor;
-				float lightRadiusInversed;
-				Vector3 lightOrigin;
-				float lightTypeVal;
-				Vector3 lightColor;
-				float lightLinearLength;
-				Vector3 lightLinearDirection;
-				float _pad;
-				Matrix4 lightSpotMatrix;
-			} pushConstants;
+			MapDlightPushConstants pushConstants;
 
 			pushConstants.projectionViewMatrix = renderer.renderer.GetProjectionViewMatrix();
 			pushConstants.modelOrigin = MakeVector3(

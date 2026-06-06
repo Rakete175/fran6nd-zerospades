@@ -667,12 +667,11 @@ namespace spades {
 			VkPushConstantRange pushConstantRange{};
 			pushConstantRange.offset = 0;
 			if (physicalLighting) {
-				// Non-physical: 108 bytes + pad (4) + mat4 viewMatrix (64) = 176
 				pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-				pushConstantRange.size = 176;
+				pushConstantRange.size = sizeof(MapSolidPushConstants);
 			} else {
 				pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-				pushConstantRange.size = 108;
+				pushConstantRange.size = sizeof(MapSolidPushConstantsBasic);
 			}
 
 			VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -773,11 +772,11 @@ namespace spades {
 				dlStages[1].module = dlFragModule;
 				dlStages[1].pName = "main";
 
-				// Dlight pipeline layout: 224 bytes push constants for both vertex + fragment
+				// Dlight pipeline layout: push constants for both vertex + fragment
 				VkPushConstantRange dlPushRange{};
 				dlPushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 				dlPushRange.offset = 0;
-				dlPushRange.size = 224;
+				dlPushRange.size = sizeof(MapDlightPushConstants);
 
 				// Set 0: spotlight projection cookie (combined image sampler).
 				VkDescriptorSetLayout dlCookieLayout = renderer.GetDlightCookieSetLayout();
