@@ -53,6 +53,20 @@ namespace {
 		spades::Vector3 viewOriginVector;  float padding3;
 		spades::Vector3 fogColor;          float fogDistance;
 	};
+
+	// Push-constant block for SoftSprite.vert / .frag (soft particles). Same
+	// std430-padding rule and the same sizeof()-for-both-sides discipline as
+	// SpritePushConstants.
+	struct SoftPushConstants {
+		spades::Matrix4 projectionViewMatrix;
+		spades::Vector3 rightVector;       float pad1;
+		spades::Vector3 upVector;          float pad2;
+		spades::Vector3 frontVector;       float pad3;
+		spades::Vector3 viewOriginVector;  float pad4;
+		spades::Vector3 fogColor;          float fogDistance;
+		float zNear;
+		float zFar;
+	};
 } // namespace
 
 namespace spades {
@@ -307,11 +321,7 @@ namespace spades {
 			pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 			pushConstantRange.offset = 0;
 			if (softParticles) {
-				// mat4 + 5*vec3(padded) + float + vec2 = 64 + 80 + 4 + 8 = 156
-				// Actually: mat4(64) + 5*(vec3+float)(80) + float(4) + vec2(8) = 152 + 4 = but let's count:
-				// mat4=64, rightVector+pad=16, upVector+pad=16, frontVector+pad=16,
-				// viewOriginVector+pad=16, fogColor+fogDistance=16, zNearFar=8 = 152
-				pushConstantRange.size = 152;
+				pushConstantRange.size = sizeof(SoftPushConstants);
 			} else {
 				pushConstantRange.size = sizeof(SpritePushConstants);
 			}
@@ -499,21 +509,7 @@ namespace spades {
 			const client::SceneDefinition& sceneDef = renderer.GetSceneDef();
 
 			if (softParticles) {
-				struct SoftPushConstants {
-					Matrix4 projectionViewMatrix;
-					Vector3 rightVector;
-					float pad1;
-					Vector3 upVector;
-					float pad2;
-					Vector3 frontVector;
-					float pad3;
-					Vector3 viewOriginVector;
-					float pad4;
-					Vector3 fogColor;
-					float fogDistance;
-					float zNear;
-					float zFar;
-				} pushConstants;
+				SoftPushConstants pushConstants;
 
 				pushConstants.projectionViewMatrix = projViewMatrix;
 				pushConstants.rightVector = sceneDef.viewAxis[0];
