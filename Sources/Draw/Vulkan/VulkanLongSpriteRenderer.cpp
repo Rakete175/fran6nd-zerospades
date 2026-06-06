@@ -33,6 +33,25 @@
 
 namespace spades {
 	namespace draw {
+		namespace {
+			// Push-constant block shared by LongSprite.vert / .frag. Vulkan's std430
+			// layout aligns each vec3 to 16 bytes, so the explicit trailing floats pad
+			// the vec3s up to match the shader exactly. Both the pipeline's
+			// pushConstantRange size and the vkCmdPushConstants size use
+			// sizeof(LongSpritePushConstants), so they can never disagree — a previous
+			// undersized range left fogDistance outside the declared range, which
+			// AMD/amdvlk drops (-> fogDistance garbage -> density clamps to 1 -> the
+			// reflex reticle fogged out to invisible), while MoltenVK tolerated it.
+			struct LongSpritePushConstants {
+				Matrix4 projectionViewMatrix;
+				Matrix4 viewMatrix;
+				Vector3 rightVector;       float padding1;
+				Vector3 upVector;          float padding2;
+				Vector3 viewOriginVector;  float padding3;
+				Vector3 fogColor;          float fogDistance;
+			};
+		} // namespace
+
 		VulkanLongSpriteRenderer::VulkanLongSpriteRenderer(VulkanRenderer& r)
 		    : renderer(r),
 		      device(static_cast<gui::SDLVulkanDevice*>(r.GetDevice().Unmanage())),
@@ -235,7 +254,9 @@ namespace spades {
 			VkPushConstantRange pushConstantRange{};
 			pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 			pushConstantRange.offset = 0;
-			pushConstantRange.size = sizeof(Matrix4) * 2 + sizeof(Vector3) * 4 + sizeof(float);
+			// Must cover the full std430-padded block (the trailing fogDistance lives
+			// at offset 188); an undersized range made amdvlk drop it.
+			pushConstantRange.size = sizeof(LongSpritePushConstants);
 
 			VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 			pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -397,18 +418,7 @@ namespace spades {
 			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
 			                        0, 1, &descriptorSet, 0, nullptr);
 
-			struct PushConstants {
-				Matrix4 projectionViewMatrix;
-				Matrix4 viewMatrix;
-				Vector3 rightVector;
-				float padding1;
-				Vector3 upVector;
-				float padding2;
-				Vector3 viewOriginVector;
-				float padding3;
-				Vector3 fogColor;
-				float fogDistance;
-			} pushConstants;
+			LongSpritePushConstants pushConstants;
 
 			const Matrix4& projViewMatrix = renderer.GetProjectionViewMatrix();
 			Vector3 fogCol = renderer.GetFogColor();
