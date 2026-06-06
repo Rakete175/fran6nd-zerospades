@@ -281,6 +281,9 @@ namespace spades {
 					SPRaise("Failed to create fence %zu (error code: %d)", i, result);
 				}
 			}
+
+			// Per-swapchain-image fence tracking (no fence is owned here).
+			imagesInFlight.assign(device->GetSwapchainImageViews().size(), VK_NULL_HANDLE);
 		}
 
 		void VulkanRenderer::CreateRenderPass() {
@@ -635,6 +638,10 @@ namespace spades {
 		waterRenderer.reset();
 		framebufferManager = stmp::make_unique<VulkanFramebufferManager>(device, renderWidth, renderHeight);
 		waterRenderer = stmp::make_unique<VulkanWaterRenderer>(*this, map);
+
+		// Device was waited idle above, so no frame references any image. Re-size to
+		// the (possibly new) image count and clear stale per-image fence associations.
+		imagesInFlight.assign(device->GetSwapchainImageViews().size(), VK_NULL_HANDLE);
 
 		lastSwapchainGeneration = device->GetSwapchainGeneration();
 		SPLog("Swapchain dependencies recreated (%dx%d)", renderWidth, renderHeight);
@@ -1082,6 +1089,25 @@ namespace spades {
 				// Swapchain was recreated, try again
 				currentImageIndex = device->AcquireNextImage(&imageAvailableSemaphore, &renderFinishedSemaphore);
 			}
+
+			// The swapchain has more images than frame slots, and per-image resources
+			// (command buffer + the image renderer's descriptor pools / vertex buffers)
+			// are reused by image index and reset when re-recording. Wait for the
+			// previous frame that used THIS image to finish before EndScene records
+			// into it, then mark this image as in flight on the current slot's fence.
+			// Without this, MAILBOX (AMD) can reset descriptors the GPU is still
+			// reading, dropping a HUD image for a frame.
+			WaitForImageInFlight();
+		}
+
+		void VulkanRenderer::WaitForImageInFlight() {
+			if (currentImageIndex >= imagesInFlight.size())
+				return;
+			if (imagesInFlight[currentImageIndex] != VK_NULL_HANDLE) {
+				vkWaitForFences(device->GetDevice(), 1, &imagesInFlight[currentImageIndex],
+				                VK_TRUE, UINT64_MAX);
+			}
+			imagesInFlight[currentImageIndex] = inFlightFences[currentFrameSlot];
 		}
 
 		void VulkanRenderer::AddDebugLine(Vector3 a, Vector3 b, Vector4 color) {
@@ -1398,6 +1424,9 @@ namespace spades {
 					if (temporaryImagePool) { temporaryImagePool->ReleaseAll(); }
 					return;
 				}
+
+				// Same per-image hazard guard as the scene path (see StartScene).
+				WaitForImageInFlight();
 
 				vkResetFences(device->GetDevice(), 1, &inFlightFences[currentFrameSlot]);
 

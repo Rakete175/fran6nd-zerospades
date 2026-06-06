@@ -114,6 +114,15 @@ namespace spades {
 			VkSemaphore imageAvailableSemaphore;
 			VkSemaphore renderFinishedSemaphore;
 			std::vector<VkFence> inFlightFences; // sized to maxFramesInFlight, not image count
+			// One entry per swapchain image: the in-flight-slot fence of the frame
+			// that last rendered to that image (VK_NULL_HANDLE if none). Because the
+			// swapchain has more images than frame slots, and per-image resources
+			// (command buffer, descriptor pools, vertex buffers) are reused by image
+			// index, we must wait on the previous user of an image before recording
+			// into it again — otherwise (notably under MAILBOX on AMD) we reset/
+			// overwrite resources the GPU is still reading. Not a Handle/owned fence,
+			// just a reference into inFlightFences.
+			std::vector<VkFence> imagesInFlight;
 
 			// Deferred deletion queue for buffers that may still be in use by GPU
 			std::vector<DeferredDeletion> deferredDeletions;
@@ -252,6 +261,11 @@ namespace spades {
 			// the user sees a dialog rather than an endless silent log loop.
 			// Resets on the first success.
 			void HandleSubmitResult(VkResult result, const char* where);
+
+			// Waits for the previous frame that rendered to currentImageIndex (if any)
+			// and records the current slot's fence as that image's in-flight fence.
+			// Call right after acquiring, before re-recording per-image resources.
+			void WaitForImageInFlight();
 
 		protected:
 			~VulkanRenderer();
