@@ -36,6 +36,25 @@
 
 SPADES_SETTING(r_softParticles);
 
+namespace {
+	// Push-constant block shared by Sprite.vert / .frag (non-soft particles).
+	// Vulkan's std430 layout aligns each vec3 to 16 bytes, so the trailing floats
+	// pad the vec3s up to match the shader exactly. Both the pipeline's
+	// pushConstantRange size and the vkCmdPushConstants size use
+	// sizeof(SpritePushConstants), so they can never disagree — a previous
+	// undersized range (180 vs the 192 actually pushed) left fogColor/fogDistance
+	// outside the declared range, which AMD/amdvlk drops (-> particles invisible
+	// with dark tearing from undefined push data), while MoltenVK tolerated it.
+	struct SpritePushConstants {
+		spades::Matrix4 projectionViewMatrix;
+		spades::Matrix4 viewMatrix;
+		spades::Vector3 rightVector;       float padding1;
+		spades::Vector3 upVector;          float padding2;
+		spades::Vector3 viewOriginVector;  float padding3;
+		spades::Vector3 fogColor;          float fogDistance;
+	};
+} // namespace
+
 namespace spades {
 	namespace draw {
 		VulkanSpriteRenderer::VulkanSpriteRenderer(VulkanRenderer& r)
@@ -294,7 +313,7 @@ namespace spades {
 				// viewOriginVector+pad=16, fogColor+fogDistance=16, zNearFar=8 = 152
 				pushConstantRange.size = 152;
 			} else {
-				pushConstantRange.size = sizeof(Matrix4) * 2 + sizeof(Vector3) * 4 + sizeof(float);
+				pushConstantRange.size = sizeof(SpritePushConstants);
 			}
 
 			VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -514,18 +533,7 @@ namespace spades {
 				                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				                   0, sizeof(pushConstants), &pushConstants);
 			} else {
-				struct PushConstants {
-					Matrix4 projectionViewMatrix;
-					Matrix4 viewMatrix;
-					Vector3 rightVector;
-					float padding1;
-					Vector3 upVector;
-					float padding2;
-					Vector3 viewOriginVector;
-					float padding3;
-					Vector3 fogColor;
-					float fogDistance;
-				} pushConstants;
+				SpritePushConstants pushConstants;
 
 				pushConstants.projectionViewMatrix = projViewMatrix;
 				pushConstants.viewMatrix = Matrix4::Identity();
