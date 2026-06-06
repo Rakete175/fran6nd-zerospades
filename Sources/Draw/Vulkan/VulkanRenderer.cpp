@@ -350,6 +350,21 @@ namespace spades {
 				SPRaise("Failed to create render pass (error code: %d)", result);
 			}
 
+			// 2D-only variant: no scene blit happens before it, so the swapchain
+			// image is still UNDEFINED (first use) or PRESENT_SRC_KHR (after a prior
+			// present) rather than COLOR_ATTACHMENT_OPTIMAL. LOADing it would be a
+			// layout mismatch, so clear the colour from an UNDEFINED initial layout.
+			VkAttachmentDescription attachments2D[] = {colorAttachment, depthAttachment};
+			attachments2D[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+			attachments2D[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+			VkRenderPassCreateInfo renderPassInfo2D = renderPassInfo;
+			renderPassInfo2D.pAttachments = attachments2D;
+
+			result = vkCreateRenderPass(device->GetDevice(), &renderPassInfo2D, nullptr, &renderPass2D);
+			if (result != VK_SUCCESS) {
+				SPRaise("Failed to create 2D render pass (error code: %d)", result);
+			}
 		}
 
 		VkFormat VulkanRenderer::FindDepthFormat() {
@@ -573,6 +588,10 @@ namespace spades {
 			if (renderPass != VK_NULL_HANDLE && vkDevice != VK_NULL_HANDLE) {
 				vkDestroyRenderPass(vkDevice, renderPass, nullptr);
 				renderPass = VK_NULL_HANDLE;
+			}
+			if (renderPass2D != VK_NULL_HANDLE && vkDevice != VK_NULL_HANDLE) {
+				vkDestroyRenderPass(vkDevice, renderPass2D, nullptr);
+				renderPass2D = VK_NULL_HANDLE;
 			}
 
 			// Semaphores are owned by SDLVulkanDevice, not destroyed here
@@ -2624,15 +2643,23 @@ namespace spades {
 				0, 0, nullptr, 0, nullptr, 1, &barrier2);
 		}
 
-		// Begin swapchain render pass for 2D UI rendering
+		// Begin swapchain render pass for 2D UI rendering.
+		// Scene frames LOAD the blitted scene colour (swapchain already in
+		// COLOR_ATTACHMENT_OPTIMAL); 2D-only frames CLEAR from UNDEFINED via the
+		// renderPass2D variant. Both attachments need a clear value because the
+		// depth attachment always uses LOAD_OP_CLEAR (and colour does too in 2D).
+		VkClearValue swapchainClearValues[2]{};
+		swapchainClearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+		swapchainClearValues[1].depthStencil = {1.0f, 0};
+
 		VkRenderPassBeginInfo swapchainRenderPassInfo{};
 		swapchainRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		swapchainRenderPassInfo.renderPass = renderPass;
+		swapchainRenderPassInfo.renderPass = sceneUsedInThisFrame ? renderPass : renderPass2D;
 		swapchainRenderPassInfo.framebuffer = swapchainFramebuffers[imageIndex];
 		swapchainRenderPassInfo.renderArea.offset = {0, 0};
 		swapchainRenderPassInfo.renderArea.extent = device->GetSwapchainExtent();
-		swapchainRenderPassInfo.clearValueCount = 0; // No clear, using LOAD_OP_LOAD
-		swapchainRenderPassInfo.pClearValues = nullptr;
+		swapchainRenderPassInfo.clearValueCount = 2;
+		swapchainRenderPassInfo.pClearValues = swapchainClearValues;
 
 		vkCmdBeginRenderPass(commandBuffer, &swapchainRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 

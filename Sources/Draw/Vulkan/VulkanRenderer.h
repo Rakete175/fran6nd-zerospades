@@ -99,6 +99,11 @@ namespace spades {
 			// Vulkan rendering resources
 			std::vector<VkCommandBuffer> commandBuffers;
 			VkRenderPass renderPass;
+			// Variant of renderPass for 2D-only frames (no scene blit): clears the
+			// swapchain colour from an UNDEFINED initial layout instead of LOADing it
+			// from COLOR_ATTACHMENT_OPTIMAL. Render-pass-compatible with renderPass,
+			// so the same swapchainFramebuffers are reused.
+			VkRenderPass renderPass2D = VK_NULL_HANDLE;
 			std::vector<VkFramebuffer> swapchainFramebuffers;
 
 			// Depth buffer
