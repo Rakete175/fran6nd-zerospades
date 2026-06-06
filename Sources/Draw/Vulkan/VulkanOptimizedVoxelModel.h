@@ -36,6 +36,34 @@ namespace spades {
 		class VulkanBuffer;
 		class VulkanImage;
 
+		// Push-constant blocks for the model pipelines, shared between the pipeline
+		// layout (range size) and the draw calls (the push) so both derive from the
+		// same sizeof() and can never drift. std430 aligns each vec3 to 16 bytes,
+		// hence the trailing pad floats. The non-physical solid pass pushes only the
+		// prefix up to the physical-only tail: offsetof(ModelSolidPushConstants,
+		// physicalTail). An undersized range drops the tail on AMD (fine on MoltenVK).
+		struct ModelSolidPushConstants { // physical lighting (252 bytes); 172 used non-physical
+			Matrix4 projectionViewMatrix;
+			Matrix4 modelMatrix;
+			Vector3 modelOrigin;   float fogDensity;
+			Vector3 customColor;   float opacity; // _pad: opacity for ghost models
+			Vector3 fogColor;
+			// --- physical-lighting-only tail (non-physical push stops here) ---
+			float   physicalTail;  // _pad2
+			Matrix4 viewMatrix;
+			Vector3 viewOrigin;
+		};
+		struct ModelDlightPushConstants { // dynamic light pass (272 bytes)
+			Matrix4 projectionViewModelMatrix;
+			Matrix4 modelMatrix;
+			Vector3 modelOrigin;           float fogDensityVal;
+			Vector3 customColor;           float lightRadius;
+			Vector3 lightOrigin;           float lightTypeVal;
+			Vector3 lightColor;            float lightRadiusInversed;
+			Vector3 lightLinearDirection;  float lightLinearLength;
+			Matrix4 lightSpotMatrix;
+		};
+
 		class VulkanOptimizedVoxelModel : public VulkanModel {
 			struct Vertex {
 				uint8_t x, y, z;

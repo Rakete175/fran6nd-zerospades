@@ -34,6 +34,7 @@
 #include <Core/Settings.h>
 #include <Core/IStream.h>
 #include <array>
+#include <cstddef>
 #include <map>
 
 namespace spades {
@@ -486,18 +487,7 @@ namespace spades {
 				float horzDistSq = dx * dx + dy * dy;
 				float fogDensity = std::min(horzDistSq / (fogDist * fogDist), 1.0f);
 
-				struct {
-					Matrix4 projectionViewMatrix;
-					Matrix4 modelMatrix;
-					Vector3 modelOrigin;
-					float fogDensity;
-					Vector3 customColor;
-					float _pad;
-					Vector3 fogColor;
-					float _pad2;
-					Matrix4 viewMatrix;
-					Vector3 viewOrigin;
-				} pushConstants;
+				ModelSolidPushConstants pushConstants;
 
 				pushConstants.projectionViewMatrix = mvpMatrix;
 				pushConstants.modelMatrix = param.matrix;
@@ -505,15 +495,15 @@ namespace spades {
 				pushConstants.fogDensity = fogDensity;
 				pushConstants.customColor = param.customColor;
 				// Ghost depth prepass writes full color; set opacity=1.0 (blend is OFF)
-				pushConstants._pad = ghostPass ? 1.0f : 0.0f;
+				pushConstants.opacity = ghostPass ? 1.0f : 0.0f;
 				pushConstants.fogColor = fogCol;
 
-				uint32_t pcSize = 172;
+				uint32_t pcSize = offsetof(ModelSolidPushConstants, physicalTail);
 				VkShaderStageFlags pcStages = (ghostPass || sharedPipeline.physicalLighting)
 					? (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
 					: VK_SHADER_STAGE_VERTEX_BIT;
 				if (sharedPipeline.physicalLighting) {
-					pushConstants._pad2 = 0.0f;
+					pushConstants.physicalTail = 0.0f;
 					pushConstants.viewMatrix = renderer.GetViewMatrix();
 					pushConstants.viewOrigin = renderer.GetSceneDef().viewOrigin;
 					pcSize = sizeof(pushConstants);
@@ -648,18 +638,7 @@ namespace spades {
 				float horzDistSq = dx * dx + dy * dy;
 				float fogDensity = std::min(horzDistSq / (fogDist * fogDist), 1.0f);
 
-				struct {
-					Matrix4 projectionViewMatrix;
-					Matrix4 modelMatrix;
-					Vector3 modelOrigin;
-					float fogDensity;
-					Vector3 customColor;
-					float _pad;
-					Vector3 fogColor;
-					float _pad2;
-					Matrix4 viewMatrix;
-					Vector3 viewOrigin;
-				} pushConstants;
+				ModelSolidPushConstants pushConstants;
 
 				pushConstants.projectionViewMatrix = mvpMatrix;
 				pushConstants.modelMatrix = param.matrix;
@@ -667,15 +646,15 @@ namespace spades {
 				pushConstants.fogDensity = fogDensity;
 				pushConstants.customColor = param.customColor;
 				// Pass param.opacity as alpha for ghost models
-				pushConstants._pad = ghostPass ? param.opacity : 0.0f;
+				pushConstants.opacity = ghostPass ? param.opacity : 0.0f;
 				pushConstants.fogColor = fogCol;
 
-				uint32_t pcSize = 172;
+				uint32_t pcSize = offsetof(ModelSolidPushConstants, physicalTail);
 				VkShaderStageFlags pcStages = (ghostPass || sharedPipeline.physicalLighting)
 					? (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
 					: VK_SHADER_STAGE_VERTEX_BIT;
 				if (sharedPipeline.physicalLighting) {
-					pushConstants._pad2 = 0.0f;
+					pushConstants.physicalTail = 0.0f;
 					pushConstants.viewMatrix = renderer.GetViewMatrix();
 					pushConstants.viewOrigin = renderer.GetSceneDef().viewOrigin;
 					pcSize = sizeof(pushConstants);
@@ -806,21 +785,7 @@ namespace spades {
 					float horzDistSq = dx * dx + dy * dy;
 					float fogDensity = std::min(horzDistSq / (fogDist * fogDist), 1.0f);
 
-					struct {
-						Matrix4 projectionViewModelMatrix;
-						Matrix4 modelMatrix;
-						Vector3 modelOrigin;
-						float fogDensityVal;
-						Vector3 customColor;
-						float lightRadius;
-						Vector3 lightOrigin;
-						float lightTypeVal;
-						Vector3 lightColor;
-						float lightRadiusInversed;
-						Vector3 lightLinearDirection;
-						float lightLinearLength;
-						Matrix4 lightSpotMatrix;
-					} pushConstants;
+					ModelDlightPushConstants pushConstants;
 
 					pushConstants.projectionViewModelMatrix = mvpMatrix;
 					pushConstants.modelMatrix = param.matrix;
@@ -1101,16 +1066,16 @@ namespace spades {
 				}
 			}
 
-			// Pipeline layout with push constants and shadow map descriptor set
+			// Pipeline layout with push constants and shadow map descriptor set.
+			// Physical lighting pushes the whole block; non-physical pushes only the
+			// prefix before the physical-only tail.
 			VkPushConstantRange pushConstantRange{};
 			pushConstantRange.offset = 0;
+			pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 			if (sharedPipeline.physicalLighting) {
-				// 172 + pad (4) + mat4 viewMatrix (64) + vec3 viewOrigin (12) = 252
-				pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-				pushConstantRange.size = 252;
+				pushConstantRange.size = sizeof(ModelSolidPushConstants);
 			} else {
-				pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-				pushConstantRange.size = 172;
+				pushConstantRange.size = offsetof(ModelSolidPushConstants, physicalTail);
 			}
 
 			VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -1203,11 +1168,11 @@ namespace spades {
 				dlStages[1].module = dlFragModule;
 				dlStages[1].pName = "main";
 
-				// Dlight pipeline layout: 272 bytes push constants (208 + mat4 spot matrix)
+				// Dlight pipeline layout
 				VkPushConstantRange dlPushRange{};
 				dlPushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 				dlPushRange.offset = 0;
-				dlPushRange.size = 272;
+				dlPushRange.size = sizeof(ModelDlightPushConstants);
 
 				// Set 0: spotlight projection cookie (combined image sampler).
 				VkDescriptorSetLayout dlCookieLayout = renderer.GetDlightCookieSetLayout();
