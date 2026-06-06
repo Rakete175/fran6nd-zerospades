@@ -137,19 +137,44 @@ namespace spades {
 
 				vkEndCommandBuffer(commandBuffer);
 
-				// Submit and wait
+				// Submit and wait on an explicit fence. A bare vkQueueWaitIdle with
+				// unchecked results can silently leave the texture un-uploaded (blank)
+				// on some drivers (observed on AMD/amdvlk), which is invisible for
+				// additively-blended images like weapon reflex reticles. Check every
+				// result and fail loudly with the image name so a bad upload is never
+				// cached as a valid-but-blank texture.
 				VkSubmitInfo submitInfo{};
 				submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 				submitInfo.commandBufferCount = 1;
 				submitInfo.pCommandBuffers = &commandBuffer;
 
-				vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-				vkQueueWaitIdle(device->GetGraphicsQueue());
+				VkFenceCreateInfo fenceInfo{};
+				fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+				VkFence uploadFence = VK_NULL_HANDLE;
+				vkCreateFence(device->GetDevice(), &fenceInfo, nullptr, &uploadFence);
 
+				VkResult submitRes =
+				    vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, uploadFence);
+				VkResult waitRes = VK_SUCCESS;
+				if (submitRes == VK_SUCCESS) {
+					waitRes = (uploadFence != VK_NULL_HANDLE)
+					              ? vkWaitForFences(device->GetDevice(), 1, &uploadFence,
+					                                VK_TRUE, UINT64_MAX)
+					              : vkQueueWaitIdle(device->GetGraphicsQueue());
+				}
+				if (uploadFence != VK_NULL_HANDLE)
+					vkDestroyFence(device->GetDevice(), uploadFence, nullptr);
 				vkFreeCommandBuffers(device->GetDevice(), device->GetCommandPool(), 1, &commandBuffer);
+
+				if (submitRes != VK_SUCCESS)
+					SPRaise("Failed to submit upload for image '%s' (error %d)", name.c_str(), submitRes);
+				if (waitRes != VK_SUCCESS)
+					SPRaise("Upload did not complete for image '%s' (error %d)", name.c_str(), waitRes);
 
 				// Create sampler for the image
 				vkImage->CreateSampler();
+
+				SPLog("VulkanImageManager: uploaded '%s' (%ux%u)", name.c_str(), width, height);
 
 				// Wrap in IImage interface
 				return Handle<client::IImage>(
