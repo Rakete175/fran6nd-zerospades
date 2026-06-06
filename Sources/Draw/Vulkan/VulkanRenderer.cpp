@@ -1429,18 +1429,13 @@ namespace spades {
 			SPADES_MARK_FUNCTION();
 
 			if (!inited) {
-				// Before initialization, just present black frames
-				SPLog("[VulkanRenderer::Flip] Not initialized, presenting black frame");
-				try {
-					VkSemaphore dummySemaphore1 = VK_NULL_HANDLE;
-					VkSemaphore dummySemaphore2 = VK_NULL_HANDLE;
-					uint32_t imageIndex = device->AcquireNextImage(&dummySemaphore1, &dummySemaphore2);
-					if (imageIndex != UINT32_MAX) {
-						device->PresentImage(imageIndex, nullptr, 0);
-					}
-				} catch (...) {
-					// Silently ignore errors during uninitialized presentation
-				}
+				// Reachable only after Shutdown() (the constructor sets inited
+				// before any Flip can run). Don't acquire/present here: acquiring
+				// would signal an imageAvailable semaphore that nothing waits on
+				// (a binary-semaphore-reuse violation on the next acquire), and the
+				// freshly-acquired image isn't in PRESENT_SRC_KHR layout so it can't
+				// legally be presented either. There is nothing valid to show, so
+				// the correct action is to do nothing.
 				return;
 			}
 
