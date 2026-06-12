@@ -670,8 +670,8 @@ namespace spades {
 					AddChild(tabStrip);
 					tabStrip.AddItem(_Tr("MainScreen", "Servers"), serverPanel);
 					tabStrip.AddItem(_Tr("MainScreen", "Demos"), demoPanel);
-					tabStrip.AddItem(_Tr("MainScreen", "Editor"), editorPanel);
 					tabStrip.AddItem(_Tr("MainScreen", "Mods"), modsPanel);
+					tabStrip.AddItem(_Tr("MainScreen", "Editor"), editorPanel);
 					@tabStrip.Changed = spades::ui::EventHandler(this.OnTabChanged);
 				}
 
