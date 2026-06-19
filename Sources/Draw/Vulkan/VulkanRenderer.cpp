@@ -1730,8 +1730,8 @@ namespace spades {
 
 			VkCommandBuffer commandBuffer = commandBuffers[imageIndex];
 
-			static uint32_t s_dbgPassFrame = 0;
-			const bool dbgPass = (s_dbgPassFrame++ < 4);
+			static uint32_t s_dbgSceneFrame = 0;
+			const bool dbgPass = sceneUsedInThisFrame && (s_dbgSceneFrame++ < 4);
 
 			VkCommandBufferBeginInfo beginInfo{};
 			beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1790,7 +1790,9 @@ namespace spades {
 
 		// Render shadow maps BEFORE starting main render pass (shadow maps use their own render passes)
 		if (sceneUsedInThisFrame && shadowMapRenderer && r_fogShadow) {
+			if (dbgPass) SPLog(">>> BEGIN SHADOW MAP (depth-only)");
 			shadowMapRenderer->Render(commandBuffer);
+			if (dbgPass) SPLog(">>> END SHADOW MAP");
 		}
 
 		// Render mirror pass for water reflections (r_water >= 2)
