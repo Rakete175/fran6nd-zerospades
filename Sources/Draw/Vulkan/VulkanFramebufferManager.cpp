@@ -75,8 +75,9 @@ namespace spades {
 				fbColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 			}
 
-			// Choose depth format: prefer D24_UNORM_S8_UINT, but fall back to D32_SFLOAT_S8_UINT
-			// if not supported (common on Apple Silicon / MoltenVK)
+			// Choose depth format: prefer D24_UNORM_S8_UINT, but fall back to depth-only
+			// D32_SFLOAT if not supported. Stencil is never used by this renderer, and the
+			// combined D32_SFLOAT_S8_UINT depth test misbehaves under MoltenVK on Intel.
 			VkFormatProperties formatProps;
 			vkGetPhysicalDeviceFormatProperties(device->GetPhysicalDevice(),
 			                                     VK_FORMAT_D24_UNORM_S8_UINT, &formatProps);
@@ -85,8 +86,8 @@ namespace spades {
 				fbDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
 				SPLog("Using D24_UNORM_S8_UINT depth format");
 			} else {
-				fbDepthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
-				SPLog("D24_UNORM_S8_UINT not supported, using D32_SFLOAT_S8_UINT depth format");
+				fbDepthFormat = VK_FORMAT_D32_SFLOAT;
+				SPLog("D24_UNORM_S8_UINT not supported, using depth-only D32_SFLOAT depth format");
 			}
 
 			CreateRenderPass();

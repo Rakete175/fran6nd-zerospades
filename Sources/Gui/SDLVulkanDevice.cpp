@@ -195,6 +195,16 @@ namespace spades {
 				    vkGetMoltenVKConfigurationMVK(VK_NULL_HANDLE, &mvkConfig, &configSize);
 				if (cfgRes == VK_SUCCESS || cfgRes == VK_INCOMPLETE) {
 					mvkConfig.useMTLHeap = MVK_CONFIG_USE_MTLHEAP_NEVER;
+					// Intel Macs require a 256-byte minimum constant-buffer offset
+					// alignment. MoltenVK's Metal argument buffers get sub-allocated
+					// at 16-byte-aligned offsets, which is legal on Apple Silicon
+					// (16-byte minimum) but illegal on Intel: the Metal validation
+					// layer asserts, and without it the driver silently reads
+					// descriptors from the wrong offset. Force discrete descriptor
+					// binding (NEVER == 0) so each resource is bound directly,
+					// sidestepping the misaligned argument buffer entirely.
+					mvkConfig.useMetalArgumentBuffers =
+					    static_cast<decltype(mvkConfig.useMetalArgumentBuffers)>(0);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 					vkSetMoltenVKConfigurationMVK(VK_NULL_HANDLE, &mvkConfig, &configSize);

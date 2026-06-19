@@ -32,6 +32,7 @@
 #include <Core/FileManager.h>
 #include <Core/IStream.h>
 #include <array>
+#include <algorithm>
 #include <vector>
 
 namespace spades {
@@ -218,24 +219,47 @@ namespace spades {
 			// Bind the basic pipeline
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, basicPipeline);
 
-			// Draw from nearest to farthest for optimal depth testing
-			// Include all vertical chunks
-			for (int cz = 0; cz < numChunkDepth; cz++) {
-				DrawColumnSunlight(commandBuffer, c.x, c.y, cz, viewOrigin);
-			}
+			// Hardware depth test is inert under MoltenVK on Intel, so visibility is
+			// decided purely by draw order. Sort columns by true distance and draw
+			// farthest -> nearest so the closest geometry is painted last and wins.
+			// Ring ordering (Chebyshev) mis-sorts diagonal views; squared Euclidean
+			// distance fixes the orientation-dependent leaks.
+			static const std::vector<std::pair<int, int>> sortedOffsets = [] {
+				const int R = 128 / VulkanMapChunk::Size;
+				std::vector<std::pair<int, int>> offs;
+				for (int dy = -R; dy <= R; dy++)
+					for (int dx = -R; dx <= R; dx++)
+						offs.emplace_back(dx, dy);
+				std::sort(offs.begin(), offs.end(),
+				          [](const std::pair<int, int>& a, const std::pair<int, int>& b) {
+					          return a.first * a.first + a.second * a.second >
+					                 b.first * b.first + b.second * b.second;
+				          });
+				return offs;
+			}();
 
-			// Draw in a spiral pattern outward from the camera
-			for (int dist = 1; dist <= 128 / VulkanMapChunk::Size; dist++) {
-				for (int x = c.x - dist; x <= c.x + dist; x++) {
+			// DIAGNOSTIC TOGGLE (runtime, no rebuild): r_vkDepthDiag
+			//   0 (default) -> distance-sorted back-to-front painter's mitigation.
+			//   1           -> front-to-back (nearest first). This is the natural
+			//                  early-Z order and relies on the hardware depth test.
+			// Use after fixing a pipeline/render-pass depth mismatch: set to 1 and
+			// look. Correct occlusion (and no ESP) => the depth test is alive again.
+			// See-through with this set to 1 => depth test still inert.
+			SPADES_SETTING(r_vkDepthDiag);
+			const bool frontToBack = (int)r_vkDepthDiag != 0;
+
+			if (frontToBack) {
+				for (auto it = sortedOffsets.rbegin(); it != sortedOffsets.rend(); ++it) {
 					for (int cz = 0; cz < numChunkDepth; cz++) {
-						DrawColumnSunlight(commandBuffer, x, c.y + dist, cz, viewOrigin);
-						DrawColumnSunlight(commandBuffer, x, c.y - dist, cz, viewOrigin);
+						DrawColumnSunlight(commandBuffer, c.x + it->first, c.y + it->second, cz,
+						                   viewOrigin);
 					}
 				}
-				for (int y = c.y - dist + 1; y <= c.y + dist - 1; y++) {
+			} else {
+				for (const std::pair<int, int>& off : sortedOffsets) {
 					for (int cz = 0; cz < numChunkDepth; cz++) {
-						DrawColumnSunlight(commandBuffer, c.x + dist, y, cz, viewOrigin);
-						DrawColumnSunlight(commandBuffer, c.x - dist, y, cz, viewOrigin);
+						DrawColumnSunlight(commandBuffer, c.x + off.first, c.y + off.second, cz,
+						                   viewOrigin);
 					}
 				}
 			}
