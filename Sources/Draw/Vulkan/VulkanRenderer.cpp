@@ -1730,6 +1730,9 @@ namespace spades {
 
 			VkCommandBuffer commandBuffer = commandBuffers[imageIndex];
 
+			static uint32_t s_dbgPassFrame = 0;
+			const bool dbgPass = (s_dbgPassFrame++ < 4);
+
 			VkCommandBufferBeginInfo beginInfo{};
 			beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 			beginInfo.flags = 0;
@@ -1825,6 +1828,7 @@ namespace spades {
 			mirrorRenderPassInfo.clearValueCount = 2;
 			mirrorRenderPassInfo.pClearValues = mirrorClearValues;
 
+			if (dbgPass) SPLog(">>> BEGIN MIRROR (has depth)");
 			vkCmdBeginRenderPass(commandBuffer, &mirrorRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 			// Set viewport with flipped Y for Vulkan
@@ -1933,6 +1937,7 @@ namespace spades {
 			offscreenRenderPassInfo.clearValueCount = 2;
 			offscreenRenderPassInfo.pClearValues = clearValues;
 
+			if (dbgPass) SPLog(">>> BEGIN OFFSCREEN scene (has depth)");
 			vkCmdBeginRenderPass(commandBuffer, &offscreenRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 			// Set viewport and scissor for 3D rendering
@@ -2036,6 +2041,7 @@ namespace spades {
 
 			// End offscreen render pass (scene without water is now complete)
 			vkCmdEndRenderPass(commandBuffer);
+			if (dbgPass) SPLog(">>> END OFFSCREEN scene");
 
 			Handle<VulkanImage> offscreenColor = framebufferManager->GetColorImage();
 			Handle<VulkanImage> offscreenDepth = framebufferManager->GetDepthImage();
@@ -2108,7 +2114,8 @@ namespace spades {
 				spriteRenderPassInfo.clearValueCount = 0;
 				spriteRenderPassInfo.pClearValues = nullptr;
 
-				vkCmdBeginRenderPass(commandBuffer, &spriteRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+				if (dbgPass) SPLog(">>> BEGIN SPRITE soft (NO depth)");
+			vkCmdBeginRenderPass(commandBuffer, &spriteRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 				// Set viewport and scissor
 				VkViewport spriteViewport{};
@@ -2266,7 +2273,8 @@ namespace spades {
 				waterRenderPassInfo.clearValueCount = 0; // No clear, using LOAD_OP
 				waterRenderPassInfo.pClearValues = nullptr;
 
-				vkCmdBeginRenderPass(commandBuffer, &waterRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+				if (dbgPass) SPLog(">>> BEGIN WATER (has depth)");
+			vkCmdBeginRenderPass(commandBuffer, &waterRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 				waterRenderer->RenderSunlightPass(commandBuffer);
 				vkCmdEndRenderPass(commandBuffer);
 
@@ -2557,7 +2565,8 @@ namespace spades {
 		swapchainRenderPassInfo.clearValueCount = sceneUsedInThisFrame ? 0 : 1;
 		swapchainRenderPassInfo.pClearValues = sceneUsedInThisFrame ? nullptr : &swapchainClearValue;
 
-		vkCmdBeginRenderPass(commandBuffer, &swapchainRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+		if (dbgPass) SPLog(">>> BEGIN SWAPCHAIN 2D (NO depth)");
+			vkCmdBeginRenderPass(commandBuffer, &swapchainRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 		// Render fullscreen multiply-color tints (hit flash, underwater tint, etc.)
 		RenderMultiplyColors(commandBuffer);
