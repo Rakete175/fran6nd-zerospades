@@ -241,6 +241,14 @@ namespace spades {
 				SPRaise("Failed to create pipeline layout (error code: %d)", result);
 			}
 
+			VkPipelineDepthStencilStateCreateInfo depthStencil{};
+			depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+			depthStencil.depthTestEnable = VK_FALSE;
+			depthStencil.depthWriteEnable = VK_FALSE;
+			depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+			depthStencil.depthBoundsTestEnable = VK_FALSE;
+			depthStencil.stencilTestEnable = VK_FALSE;
+
 			VkGraphicsPipelineCreateInfo pipelineInfo{};
 			pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 			pipelineInfo.stageCount = 2;
@@ -250,6 +258,7 @@ namespace spades {
 			pipelineInfo.pViewportState = &viewportState;
 			pipelineInfo.pRasterizationState = &rasterizer;
 			pipelineInfo.pMultisampleState = &multisampling;
+			pipelineInfo.pDepthStencilState = &depthStencil;
 			pipelineInfo.pColorBlendState = &colorBlending;
 			pipelineInfo.pDynamicState = &dynamicState;
 			pipelineInfo.layout = pipelineLayout;
