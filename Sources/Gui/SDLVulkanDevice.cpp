@@ -47,6 +47,18 @@ namespace spades {
 
 		static const int MAX_FRAMES_IN_FLIGHT = 2;
 
+#if defined(__APPLE__) && defined(__x86_64__)
+		namespace detail {
+			// Member detection: older MoltenVK (<=1.2.x) headers lack useMTLHeap.
+			// 0 == MVK_CONFIG_USE_MTLHEAP_NEVER.
+			template <typename C>
+			auto MVKDisableMTLHeap(C& cfg, int) -> decltype(cfg.useMTLHeap, void()) {
+				cfg.useMTLHeap = static_cast<decltype(cfg.useMTLHeap)>(0);
+			}
+			template <typename C> void MVKDisableMTLHeap(C&, long) {}
+		} // namespace detail
+#endif
+
 #ifndef NDEBUG
 		static const bool enableValidationLayers = true;
 #else
@@ -194,7 +206,7 @@ namespace spades {
 				VkResult cfgRes =
 				    vkGetMoltenVKConfigurationMVK(VK_NULL_HANDLE, &mvkConfig, &configSize);
 				if (cfgRes == VK_SUCCESS || cfgRes == VK_INCOMPLETE) {
-					mvkConfig.useMTLHeap = MVK_CONFIG_USE_MTLHEAP_NEVER;
+					detail::MVKDisableMTLHeap(mvkConfig, 0);
 					// Intel Macs require a 256-byte minimum constant-buffer offset
 					// alignment. MoltenVK's Metal argument buffers get sub-allocated
 					// at 16-byte-aligned offsets, which is legal on Apple Silicon

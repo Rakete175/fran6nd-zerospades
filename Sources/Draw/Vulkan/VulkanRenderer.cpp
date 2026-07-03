@@ -2084,7 +2084,9 @@ namespace spades {
 				// Transition depth to SHADER_READ_ONLY for sampling. Skipped under
 				// MSAA: the depth was already transitioned and resolved above, and the
 				// sprites sample the resolved depth via GetResolvedDepthImage().
-				if (!msaaScene) {
+				if (!msaaScene && framebufferManager->IsSplitSceneDepth()) {
+					framebufferManager->CopySceneDepthForSampling(commandBuffer);
+				} else if (!msaaScene) {
 					VkImageMemoryBarrier depthBarrier{};
 					depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 					depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -2195,10 +2197,14 @@ namespace spades {
 
 				// Under MSAA the depth (barriers[1]) was already transitioned to
 				// SHADER_READ and resolved above, so only transition the colour.
+				const bool splitDepth1x = !msaaScene && framebufferManager->IsSplitSceneDepth();
 				vkCmdPipelineBarrier(commandBuffer,
 					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-					0, 0, nullptr, 0, nullptr, msaaScene ? 1u : 2u, barriers);
+					0, 0, nullptr, 0, nullptr, (msaaScene || splitDepth1x) ? 1u : 2u, barriers);
+				if (splitDepth1x) {
+					framebufferManager->CopySceneDepthForSampling(commandBuffer);
+				}
 			}
 
 			// Clear sprites after rendering (whether soft or not)
@@ -2260,10 +2266,12 @@ namespace spades {
 				backToAttachment[1].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
 				backToAttachment[1].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
+				const bool splitDepthWater =
+				    !msaaScene && framebufferManager->IsSplitSceneDepth();
 				vkCmdPipelineBarrier(commandBuffer,
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-					0, 0, nullptr, 0, nullptr, 2, backToAttachment);
+					0, 0, nullptr, 0, nullptr, splitDepthWater ? 1u : 2u, backToAttachment);
 
 				// Begin water render pass with LOAD_OP to preserve scene content
 				VkRenderPassBeginInfo waterRenderPassInfo{};
@@ -2313,7 +2321,11 @@ namespace spades {
 				vkCmdPipelineBarrier(commandBuffer,
 					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-					0, 0, nullptr, 0, nullptr, 2, waterPostBarriers);
+					0, 0, nullptr, 0, nullptr, splitDepthWater ? 1u : 2u, waterPostBarriers);
+				if (splitDepthWater) {
+					// refresh copy so post filters see the water's depth writes
+					framebufferManager->CopySceneDepthForSampling(commandBuffer);
+				}
 			}
 
 			// Under MSAA, resolve the final multisampled scene colour for the

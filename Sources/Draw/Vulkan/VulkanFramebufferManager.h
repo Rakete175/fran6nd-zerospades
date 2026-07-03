@@ -96,6 +96,12 @@ namespace spades {
 			Handle<VulkanImage> renderColorImage;
 			Handle<VulkanImage> renderDepthImage;
 
+			// r_vkSampledSceneDepth=0 (default, 1x only): depth attachment is not
+			// SAMPLED; depth-sampling consumers read sceneDepthSampleImage instead
+			// (Intel MoltenVK workaround). =1 restores direct sampling.
+			bool splitSceneDepth;
+			Handle<VulkanImage> sceneDepthSampleImage;
+
 			// Single-sample resolve targets for the scene attachments. Only created
 			// when useMSAA; the post-process chain and any code that *reads* the
 			// finished scene samples these instead of the multisampled attachments
@@ -155,8 +161,15 @@ namespace spades {
 				return useMSAA ? renderColorResolveImage : renderColorImage;
 			}
 			Handle<VulkanImage> GetResolvedDepthImage() {
-				return useMSAA ? renderDepthResolveImage : renderDepthImage;
+				if (useMSAA)
+					return renderDepthResolveImage;
+				return splitSceneDepth ? sceneDepthSampleImage : renderDepthImage;
 			}
+			bool IsSplitSceneDepth() const { return splitSceneDepth; }
+
+			// Depth: ATTACHMENT_OPTIMAL in/out; copy ends SHADER_READ_ONLY.
+			// No-op unless splitSceneDepth.
+			void CopySceneDepthForSampling(VkCommandBuffer commandBuffer);
 			bool IsMSAA() const { return useMSAA; }
 			VkSampleCountFlagBits GetSampleCount() const { return sampleCount; }
 
