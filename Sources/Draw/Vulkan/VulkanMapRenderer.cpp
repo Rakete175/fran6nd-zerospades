@@ -644,8 +644,10 @@ namespace spades {
 			//   binding 4 — radiosity Y 3D texture
 			//   binding 5 — radiosity Z 3D texture
 			//   binding 6 — 2D AmbientOcclusion atlas (no-radiosity path AO, GL parity)
-			VkDescriptorSetLayoutBinding bindings[7]{};
-			for (uint32_t i = 0; i < 7; ++i) {
+			//   binding 7 — voxel column bitmask (RG32_UINT usampler2D) for the
+			//               software ray-tracing path (r_vulkanRaytracedShadows)
+			VkDescriptorSetLayoutBinding bindings[8]{};
+			for (uint32_t i = 0; i < 8; ++i) {
 				bindings[i].binding = i;
 				bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 				bindings[i].descriptorCount = 1;
@@ -654,7 +656,7 @@ namespace spades {
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayoutInfo{};
 			descriptorLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-			descriptorLayoutInfo.bindingCount = 7;
+			descriptorLayoutInfo.bindingCount = 8;
 			descriptorLayoutInfo.pBindings = bindings;
 
 			result = vkCreateDescriptorSetLayout(vkDevice, &descriptorLayoutInfo, nullptr, &descriptorSetLayout);
@@ -664,7 +666,7 @@ namespace spades {
 
 			VkDescriptorPoolSize poolSize{};
 			poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			poolSize.descriptorCount = 7;
+			poolSize.descriptorCount = 8;
 
 			VkDescriptorPoolCreateInfo poolInfo{};
 			poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -960,7 +962,8 @@ namespace spades {
 		                                                VkImageView radXView,
 		                                                VkImageView radYView,
 		                                                VkImageView radZView,
-		                                                VkSampler radSampler) {
+		                                                VkSampler radSampler,
+		                                                VulkanImage* voxelBitmapImage) {
 			if (!shadowImage || textureDescriptorSet == VK_NULL_HANDLE)
 				return;
 
@@ -995,7 +998,17 @@ namespace spades {
 				aoAtlasInfo.sampler = aoSampler;
 			}
 
-			VkWriteDescriptorSet writes[7]{};
+			// Binding 7 — voxel column bitmask (ray-tracing acceleration
+			// structure). Must always be a valid RG32_UINT image because the
+			// phys fragment shader declares a usampler2D at this binding.
+			VkDescriptorImageInfo voxelInfo{};
+			voxelInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			if (voxelBitmapImage) {
+				voxelInfo.imageView = voxelBitmapImage->GetImageView();
+				voxelInfo.sampler = voxelBitmapImage->GetSampler();
+			}
+
+			VkWriteDescriptorSet writes[8]{};
 			writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writes[0].dstSet = textureDescriptorSet;
 			writes[0].dstBinding = 0;
@@ -1022,8 +1035,15 @@ namespace spades {
 			writes[6].descriptorCount = 1;
 			writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			writes[6].pImageInfo = &aoAtlasInfo;
+			writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writes[7].dstSet = textureDescriptorSet;
+			writes[7].dstBinding = 7;
+			writes[7].descriptorCount = 1;
+			writes[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			writes[7].pImageInfo = &voxelInfo;
 
-			vkUpdateDescriptorSets(device->GetDevice(), 7, writes, 0, nullptr);
+			uint32_t writeCount = voxelBitmapImage ? 8u : 7u;
+			vkUpdateDescriptorSets(device->GetDevice(), writeCount, writes, 0, nullptr);
 		}
 
 	} // namespace draw

@@ -408,7 +408,8 @@ namespace spades {
 				);
 				pushConstants.fogDistance = renderer.renderer.GetFogDistance();
 				pushConstants.viewOrigin = eye;
-				pushConstants._pad = 0.0f;
+				pushConstants.raytracedShadows =
+					renderer.renderer.IsRaytracedShadowEnabled() ? 1.0f : 0.0f;
 				pushConstants.fogColor = fogCol;
 				pushConstants._pad2 = 0.0f;
 				pushConstants.sunDirection = renderer.renderer.GetSunDirection();

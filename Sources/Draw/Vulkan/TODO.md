@@ -143,3 +143,37 @@ constants — promote to `r_outlinesDepthThreshold` /
 
 - [ ] **Committed `.spv` files drift from the GLSL.** CMake regenerates
       them on every build, so the checked-in copies become misleading.
+
+## Software ray tracing ("RTX") — roadmap
+
+Goal: realistic per-pixel light transport for all blocks while keeping the
+voxel art style (hard block edges, crisp shadows) and running on **any Vulkan
+1.0 GPU** — no `VK_KHR_ray_tracing_pipeline` / `VK_KHR_ray_query` required.
+
+Core acceleration structure (done, step 1): `VulkanVoxelBitmapRenderer`
+packs the whole 512×512×64 map into one 512×512 `RG32_UINT` texture — 64
+solidity bits per (x, y) column, 2 MB VRAM, incrementally updated on block
+edits. Shaders ray-march it with a 2D DDA; one texel fetch tests a whole
+64-voxel column, so shadow rays typically resolve in a handful of fetches.
+
+- [x] **Step 1 — Ray-traced sun shadows** (`r_vulkanRaytracedShadows`,
+      requires `r_physicalLighting`). `BasicMapPhys.frag` traces a per-pixel
+      shadow ray through the column bitmask (descriptor set 0, binding 7)
+      instead of sampling the 2D heightmap. Push constant flag rides in the
+      former `_pad` slot (`MapSolidPushConstants.raytracedShadows`), so the
+      layout is unchanged.
+- [ ] **Step 2 — Models + water**: wire the same trace into
+      `BasicModelVertexColorPhys.frag` and the water shaders (ray-traced
+      shadows on models and reflections of the correct sky/blocks on water).
+- [ ] **Step 3 — Ray-traced specular reflections on blocks**: replace the
+      constant `specularShading` hemisphere approximation with a single
+      reflection ray (block color on hit via the shadow-map color texture or
+      a color atlas, sky/fog color on miss). One-bounce, still DDA.
+- [ ] **Step 4 — Ray-traced AO / soft shadows**: N short cosine rays with
+      per-pixel blue-noise rotation + temporal accumulation (needs the TAA
+      filter from the AA section). Replaces the CPU ambient-shadow texture.
+- [ ] **Step 5 (optional) — Hardware fast path**: detect
+      `VK_KHR_ray_query`; where present, swap the DDA for `rayQueryEXT`
+      against an AABB BLAS of surface voxels. Same shader interface, pure
+      perf win on RTX/RDNA2+ GPUs; the software path stays as the universal
+      fallback.

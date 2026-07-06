@@ -46,6 +46,7 @@ namespace spades {
 		class VulkanFlatMapRenderer;
 		class VulkanShadowMapRenderer;
 		class VulkanMapShadowRenderer;
+		class VulkanVoxelBitmapRenderer;
 		class VulkanFramebufferManager;
 		class VulkanProgramManager;
 		class VulkanModelManager;
@@ -159,6 +160,7 @@ namespace spades {
 			std::unique_ptr<VulkanFlatMapRenderer> flatMapRenderer;
 			std::unique_ptr<VulkanShadowMapRenderer> shadowMapRenderer;
 			std::unique_ptr<VulkanMapShadowRenderer> mapShadowRenderer;
+			std::unique_ptr<VulkanVoxelBitmapRenderer> voxelBitmapRenderer;
 			std::unique_ptr<VulkanAmbientShadowRenderer> ambientShadowRenderer;
 			std::unique_ptr<VulkanRadiosityRenderer> radiosityRenderer;
 			std::unique_ptr<VulkanFramebufferManager> framebufferManager;
@@ -310,6 +312,10 @@ namespace spades {
 			VkDescriptorSetLayout GetDlightCookieSetLayout();
 			VkDescriptorSet GetDlightCookieDescriptorSet(VulkanImage* cookieImage);
 			bool IsRenderingMirror() const { return renderingMirror; }
+
+			// True when the software ray-traced sun-shadow path should be used
+			// (r_vulkanRaytracedShadows enabled and the voxel bitmask exists).
+			bool IsRaytracedShadowEnabled() const;
 		int GetRenderWidth() const { return renderWidth; }
 		int GetRenderHeight() const { return renderHeight; }
 
@@ -359,6 +365,7 @@ namespace spades {
 			VulkanWaterRenderer* GetWaterRenderer() { return waterRenderer.get(); }
 			VulkanShadowMapRenderer* GetShadowMapRenderer() { return shadowMapRenderer.get(); }
 			VulkanMapShadowRenderer* GetMapShadowRenderer() { return mapShadowRenderer.get(); }
+			VulkanVoxelBitmapRenderer* GetVoxelBitmapRenderer() { return voxelBitmapRenderer.get(); }
 			VulkanAmbientShadowRenderer* GetAmbientShadowRenderer() { return ambientShadowRenderer.get(); }
 			VulkanRadiosityRenderer* GetRadiosityRenderer() { return radiosityRenderer.get(); }
 			VulkanFramebufferManager* GetFramebufferManager() { return framebufferManager.get(); }

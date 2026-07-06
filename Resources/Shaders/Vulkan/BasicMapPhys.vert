@@ -49,6 +49,7 @@ layout(location = 7) out vec3 reflectionDir;
 layout(location = 8) out vec3 aoCoord;          // 3D coords into AO texture
 layout(location = 9) out vec3 radiosityTextureCoord; // 3D coords into radiosity textures
 layout(location = 10) out vec3 normalVarying;   // world-space surface normal
+layout(location = 11) out vec3 worldPosVarying;  // world-space position (ray-traced shadows)
 
 void main() {
 	vec3 position = vec3(positionAttribute);
@@ -96,4 +97,5 @@ void main() {
 	// Radiosity 3D-texture coords (matches GL MapRadiosity.vs).
 	radiosityTextureCoord = worldPos.xyz / vec3(512.0, 512.0, 64.0);
 	normalVarying = normalFloat;
+	worldPosVarying = worldPos.xyz;
 }

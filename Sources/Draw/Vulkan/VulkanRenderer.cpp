@@ -28,6 +28,7 @@
 #include "VulkanFlatMapRenderer.h"
 #include "VulkanShadowMapRenderer.h"
 #include "VulkanMapShadowRenderer.h"
+#include "VulkanVoxelBitmapRenderer.h"
 #include "VulkanFramebufferManager.h"
 #include "VulkanImageWrapper.h"
 #include "VulkanImageManager.h"
@@ -64,6 +65,7 @@ SPADES_SETTING(r_hdr);
 SPADES_SETTING(r_bloom);
 SPADES_SETTING(r_fogShadow);
 SPADES_SETTING(r_modelShadows);
+SPADES_SETTING(r_vulkanRaytracedShadows);
 SPADES_SETTING(r_radiosity);
 SPADES_SETTING(r_depthOfField);
 SPADES_SETTING(r_fxaa);
@@ -234,6 +236,7 @@ namespace spades {
 			ambientShadowRenderer.reset();
 			radiosityRenderer.reset();
 			mapShadowRenderer.reset();
+			voxelBitmapRenderer.reset();
 			lensFlareFilter.reset();
 			colorCorrectionFilter.reset();
 			cavityOutlineFilter.reset();
@@ -899,10 +902,12 @@ namespace spades {
 			// Initialize map shadow renderer (heightmap shadow) BEFORE map renderer
 			if (map) {
 				mapShadowRenderer = stmp::make_unique<VulkanMapShadowRenderer>(*this, map);
+				voxelBitmapRenderer = stmp::make_unique<VulkanVoxelBitmapRenderer>(*this, map);
 				ambientShadowRenderer = stmp::make_unique<VulkanAmbientShadowRenderer>(*this, *map);
 				radiosityRenderer = stmp::make_unique<VulkanRadiosityRenderer>(*this, *map);
 			} else {
 				mapShadowRenderer.reset();
+				voxelBitmapRenderer.reset();
 				ambientShadowRenderer.reset();
 				radiosityRenderer.reset();
 			}
@@ -929,7 +934,8 @@ namespace spades {
 						radiosityRenderer->GetImageViewX(),
 						radiosityRenderer->GetImageViewY(),
 						radiosityRenderer->GetImageViewZ(),
-						radiosityRenderer->GetSampler());
+						radiosityRenderer->GetSampler(),
+						voxelBitmapRenderer ? voxelBitmapRenderer->GetBitmapImage() : nullptr);
 				}
 			} else {
 				mapRenderer.reset();
@@ -1606,12 +1612,18 @@ namespace spades {
 			return static_cast<float>(renderHeight);
 		}
 
+		bool VulkanRenderer::IsRaytracedShadowEnabled() const {
+			return ((int)r_vulkanRaytracedShadows != 0) && voxelBitmapRenderer != nullptr;
+		}
+
 		void VulkanRenderer::GameMapChanged(int x, int y, int z, client::GameMap* map) {
 			SPADES_MARK_FUNCTION();
 			if (mapRenderer)
 				mapRenderer->GameMapChanged(x, y, z, map);
 			if (mapShadowRenderer)
 				mapShadowRenderer->GameMapChanged(x, y, z, map);
+			if (voxelBitmapRenderer)
+				voxelBitmapRenderer->GameMapChanged(x, y, z, map);
 			if (ambientShadowRenderer)
 				ambientShadowRenderer->GameMapChanged(x, y, z, map);
 			if (radiosityRenderer)
@@ -1773,6 +1785,12 @@ namespace spades {
 		// Update map shadow heightmap texture (incremental updates from block changes)
 		if (sceneUsedInThisFrame && mapShadowRenderer) {
 			mapShadowRenderer->Update(commandBuffer);
+		}
+
+		// Keep the ray-tracing voxel column bitmask in sync with block edits
+		// (no-op unless r_vulkanRaytracedShadows is enabled).
+		if (sceneUsedInThisFrame && voxelBitmapRenderer) {
+			voxelBitmapRenderer->Update(commandBuffer);
 		}
 
 		// Upload any per-block ambient occlusion chunks that the background

@@ -45,7 +45,10 @@ namespace spades {
 		struct MapSolidPushConstants { // physical lighting (192 bytes)
 			Matrix4 projectionViewMatrix;
 			Vector3 modelOrigin;   float fogDistance;
-			Vector3 viewOrigin;    float _pad;
+			// raytracedShadows > 0.5: fragment shader traces a per-pixel
+			// shadow ray through the voxel column bitmask (binding 7)
+			// instead of sampling the 2D heightmap shadow texture.
+			Vector3 viewOrigin;    float raytracedShadows;
 			Vector3 fogColor;      float _pad2;
 			Vector3 sunDirection;  float _pad3; // _pad3 aligns viewMatrix to 16
 			Matrix4 viewMatrix;
@@ -159,11 +162,14 @@ namespace spades {
 			//   binding 6 = 2D AmbientOcclusion atlas (no-radiosity path AO, GL parity)
 			//               — sourced from Gfx/AmbientOcclusion.png via the cached
 			//               aoImage member; not a parameter.
+			//   binding 7 = voxel column bitmask (RG32_UINT) — software
+			//               ray-tracing acceleration structure (raytraced shadows)
 			void UpdateShadowDescriptor(VulkanImage* shadowImage,
 			                            VkImageView aoView, VkSampler aoSampler,
 			                            VkImageView radFlatView, VkImageView radXView,
 			                            VkImageView radYView, VkImageView radZView,
-			                            VkSampler radSampler);
+			                            VkSampler radSampler,
+			                            VulkanImage* voxelBitmapImage);
 
 			VkDescriptorSet GetShadowDescriptorSet() const { return textureDescriptorSet; }
 			VkDescriptorSetLayout GetShadowDescriptorSetLayout() const { return descriptorSetLayout; }
