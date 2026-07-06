@@ -50,7 +50,9 @@ namespace spades {
 			Vector3 fogColor;      float mirrorClipZ; // water-plane Z in the reflection pass (else +inf); also pads sunDirection to its 16B slot
 			Vector3 sunDirection;  // points toward the sun (renderer GetSunDirection)
 			// --- physical-lighting-only tail (non-physical push stops here) ---
-			float   physicalTail;  // _pad3 — aligns viewMatrix
+			// physicalTail doubles as the ray-traced-shadow flag (>0.5 = on);
+			// it only aligns viewMatrix otherwise, so the value is free to use.
+			float   physicalTail;  // aka raytracedShadows
 			Matrix4 viewMatrix;
 			Vector3 viewOrigin;
 		};

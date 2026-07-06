@@ -52,6 +52,7 @@ layout(location = 9) out vec3 aoCoord;          // 3D coords into AO texture
 layout(location = 10) out vec3 radiosityTextureCoord;
 layout(location = 11) out vec3 normalVarying;
 layout(location = 12) out float waterClip;     // >=0 keep, <0 clip below the reflection plane
+layout(location = 13) out vec3 worldPosVarying; // world-space position (ray-traced shadows)
 
 // Must match ModelDynamicLit.vert's gl_Position exactly: the additive dynamic-
 // light pass uses depth test EQUAL against this physical-lighting opaque pass,
@@ -111,4 +112,5 @@ void main() {
 	// Reflection-pass water clip: negative below the water plane.
 	// mirrorClipZ is +inf in the normal scene pass, so this stays positive.
 	waterClip = pushConstants.mirrorClipZ - worldPos.z;
+	worldPosVarying = worldPos;
 }

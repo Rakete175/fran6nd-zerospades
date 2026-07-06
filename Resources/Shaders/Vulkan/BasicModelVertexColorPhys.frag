@@ -26,6 +26,9 @@ layout(set = 0, binding = 2) uniform sampler3D radiosityTextureFlat;
 layout(set = 0, binding = 3) uniform sampler3D radiosityTextureX;
 layout(set = 0, binding = 4) uniform sampler3D radiosityTextureY;
 layout(set = 0, binding = 5) uniform sampler3D radiosityTextureZ;
+// binding 6 (AO atlas) unused here.
+// Ray-tracing acceleration structure: 64-bit solidity bitmask per map column.
+layout(set = 0, binding = 7) uniform usampler2D voxelColumnTexture;
 
 layout(push_constant) uniform PushConstants {
 	mat4 projectionViewMatrix;
@@ -37,7 +40,7 @@ layout(push_constant) uniform PushConstants {
 	vec3 fogColor;
 	float mirrorClipZ; // water-plane Z in the reflection pass (else +inf)
 	vec3 sunDirection;
-	float _pad3;
+	float raytracedShadows; // >0.5 = ray-traced sun shadow
 	mat4 viewMatrix;
 	vec3 viewOrigin;
 } pushConstants;
@@ -55,6 +58,7 @@ layout(location = 9) in vec3 aoCoord;          // 3D coords into AO texture
 layout(location = 10) in vec3 radiosityTextureCoord;
 layout(location = 11) in vec3 normalVarying;
 layout(location = 12) in float waterClip;      // <0 = below the reflection plane
+layout(location = 13) in vec3 worldPosVarying;
 
 layout(location = 0) out vec4 fragColor;
 
@@ -116,15 +120,116 @@ float CookTorrance(vec3 eyeVec, vec3 lightVec, vec3 normal) {
 	return distribution * fresnel * visibility;
 }
 
+// ---------------------------------------------------------------------------
+// Software ray tracing ("RTX" path, step 1: sun shadows)
+//
+// The map is a 512x512x64 voxel grid; voxelColumnTexture stores a 64-bit
+// solidity bitmask per (x, y) column. A shadow ray is marched with a 2D DDA
+// over columns; every column crossing tests the full 64-voxel span with one
+// texel fetch and a couple of bit masks. Typical rays resolve in < 10
+// fetches. Works on any Vulkan 1.0 GPU — no RT extensions required.
+// ---------------------------------------------------------------------------
+
+// Inclusive bitmask for bits [a, b] of a 32-bit lane (b < a gives 0).
+uint LaneRangeMask(int a, int b) {
+	if (b < a || b < 0 || a > 31)
+		return 0u;
+	a = clamp(a, 0, 31);
+	b = clamp(b, 0, 31);
+	uint hiMask = (b >= 31) ? 0xFFFFFFFFu : ((1u << uint(b + 1)) - 1u);
+	uint loMask = (a <= 0) ? 0u : ((1u << uint(a)) - 1u);
+	return hiMask & ~loMask;
+}
+
+// Inclusive bitmask for voxel z range [z0, z1] split across (lo, hi) lanes.
+uvec2 ColumnRangeMask(int z0, int z1) {
+	return uvec2(LaneRangeMask(z0, z1), LaneRangeMask(z0 - 32, z1 - 32));
+}
+
+// Trace a ray from `origin` toward the sun. Returns 1.0 (lit) or 0.0 (shadow).
+float TraceSunShadow(vec3 origin, vec3 dir) {
+	// z decreases toward the sky. Rays that never go up cannot escape;
+	// keep them on the cheap heightmap result instead (caller decides).
+	const float kMaxDistance = 160.0;
+
+	// Distance at which the ray leaves the map through the top (z < 0).
+	float tMax = kMaxDistance;
+	if (dir.z < -0.0001)
+		tMax = min(tMax, (origin.z + 0.5) / -dir.z);
+
+	vec2 d = dir.xy;
+	// Avoid division by zero for axis-aligned rays.
+	vec2 safeD = vec2(abs(d.x) < 1e-6 ? 1e-6 : d.x,
+	                  abs(d.y) < 1e-6 ? 1e-6 : d.y);
+	vec2 invD = 1.0 / safeD;
+
+	ivec2 cell = ivec2(floor(origin.xy));
+	ivec2 stepDir = ivec2(sign(safeD));
+	vec2 deltaDist = abs(invD);
+
+	// Parametric distance to the first x / y column boundary.
+	vec2 frac = origin.xy - vec2(cell);
+	vec2 sideDist;
+	sideDist.x = (stepDir.x > 0 ? (1.0 - frac.x) : frac.x) * deltaDist.x;
+	sideDist.y = (stepDir.y > 0 ? (1.0 - frac.y) : frac.y) * deltaDist.y;
+
+	float t = 0.0;
+	for (int i = 0; i < 96; i++) {
+		float tNext = min(min(sideDist.x, sideDist.y), tMax);
+
+		// Voxel z span crossed inside the current column segment [t, tNext].
+		float zA = origin.z + dir.z * t;
+		float zB = origin.z + dir.z * tNext;
+		float zLo = min(zA, zB);
+		float zHi = max(zA, zB);
+
+		if (zHi < 0.0)
+			return 1.0; // fully above the map: reached the sky
+		if (zLo >= 63.0)
+			return 0.0; // heading into the solid map floor
+
+		int z0 = int(floor(max(zLo, 0.0)));
+		int z1 = int(floor(min(zHi, 62.999)));
+
+		uvec2 bits = texelFetch(voxelColumnTexture, cell & ivec2(511), 0).rg;
+		uvec2 mask = ColumnRangeMask(z0, z1);
+		if (((bits.x & mask.x) | (bits.y & mask.y)) != 0u)
+			return 0.0; // solid voxel intersected: in shadow
+
+		if (tNext >= tMax)
+			return 1.0;
+
+		// Advance the 2D DDA to the next column.
+		t = tNext;
+		if (sideDist.x < sideDist.y) {
+			sideDist.x += deltaDist.x;
+			cell.x += stepDir.x;
+		} else {
+			sideDist.y += deltaDist.y;
+			cell.y += stepDir.y;
+		}
+	}
+	return 1.0;
+}
+
 void main() {
 	// Reflection pass: discard fragments below the water plane so underwater
 	// players never enter the mirror (waterClip is +inf-based in the scene pass).
 	if (waterClip < 0.0)
 		discard;
 
-	// Evaluate map shadow
-	float shadowVal = texture(mapShadowTexture, shadowCoord.xy).w;
-	float shadow = (shadowVal < shadowCoord.z - 0.0001) ? 0.0 : 1.0;
+	// Evaluate sun shadow: ray-traced through the voxel bitmask when enabled,
+	// otherwise the classic 2D heightmap lookup.
+	float shadow;
+	if (pushConstants.raytracedShadows > 0.5) {
+		vec3 nrmWS = normalize(normalVarying);
+		vec3 sunDirWS = normalize(pushConstants.sunDirection);
+		vec3 rayOrigin = worldPosVarying + nrmWS * 0.02 + sunDirWS * 0.01;
+		shadow = TraceSunShadow(rayOrigin, sunDirWS);
+	} else {
+		float shadowVal = texture(mapShadowTexture, shadowCoord.xy).w;
+		shadow = (shadowVal < shadowCoord.z - 0.0001) ? 0.0 : 1.0;
+	}
 
 	vec3 vertexColor = color.xyz;
 

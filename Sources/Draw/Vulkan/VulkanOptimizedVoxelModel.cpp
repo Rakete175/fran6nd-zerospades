@@ -531,7 +531,8 @@ namespace spades {
 					? (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
 					: VK_SHADER_STAGE_VERTEX_BIT;
 				if (sharedPipeline.physicalLighting) {
-					pushConstants.physicalTail = 0.0f;
+					pushConstants.physicalTail =
+						renderer.IsRaytracedShadowEnabled() ? 1.0f : 0.0f;
 					pushConstants.viewMatrix = renderer.GetViewMatrix();
 					pushConstants.viewOrigin = renderer.GetSceneDef().viewOrigin;
 					pcSize = sizeof(pushConstants);
@@ -895,7 +896,8 @@ namespace spades {
 					? (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
 					: VK_SHADER_STAGE_VERTEX_BIT;
 				if (sharedPipeline.physicalLighting) {
-					pushConstants.physicalTail = 0.0f;
+					pushConstants.physicalTail =
+						renderer.IsRaytracedShadowEnabled() ? 1.0f : 0.0f;
 					pushConstants.viewMatrix = renderer.GetViewMatrix();
 					pushConstants.viewOrigin = renderer.GetSceneDef().viewOrigin;
 					pcSize = sizeof(pushConstants);
@@ -1278,11 +1280,12 @@ namespace spades {
 			//   binding 4 — radiosity Y 3D texture
 			//   binding 5 — radiosity Z 3D texture
 			{
-				// Mirrors VulkanMapRenderer's 7-binding shadow descriptor set
+				// Mirrors VulkanMapRenderer's 8-binding shadow descriptor set
 				// (the model binds the map renderer's set at draw time, so the
-				// layouts must match).  Binding 6 is the 2D AO atlas.
-				VkDescriptorSetLayoutBinding bindings[7]{};
-				for (uint32_t i = 0; i < 7; ++i) {
+				// layouts must match). Binding 6 is the 2D AO atlas; binding 7
+				// is the voxel column bitmask for ray-traced shadows.
+				VkDescriptorSetLayoutBinding bindings[8]{};
+				for (uint32_t i = 0; i < 8; ++i) {
 					bindings[i].binding = i;
 					bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 					bindings[i].descriptorCount = 1;
@@ -1291,7 +1294,7 @@ namespace spades {
 
 				VkDescriptorSetLayoutCreateInfo descriptorLayoutInfo{};
 				descriptorLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-				descriptorLayoutInfo.bindingCount = 7;
+				descriptorLayoutInfo.bindingCount = 8;
 				descriptorLayoutInfo.pBindings = bindings;
 
 				result = vkCreateDescriptorSetLayout(vkDevice, &descriptorLayoutInfo, nullptr, &sharedPipeline.descriptorSetLayout);
