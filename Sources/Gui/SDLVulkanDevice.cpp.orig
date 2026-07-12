@@ -869,7 +869,6 @@ namespace spades {
 			int width = 0, height = 0;
 			SDL_GetWindowSize(window, &width, &height);
 			while (width == 0 || height == 0) {
-				SDL_PumpEvents(); // needed so SDL updates the cached size while minimized
 				SDL_GetWindowSize(window, &width, &height);
 				SDL_Delay(10);
 			}
