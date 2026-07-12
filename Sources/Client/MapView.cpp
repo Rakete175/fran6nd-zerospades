@@ -524,7 +524,11 @@ namespace spades {
 			Handle<IImage> playerADSViewIcon = renderer.RegisterImage("Gfx/Map/ViewADS.png");
 
 			float aimDownState = localPlayerIsSpectating ? client->spectatorZoomState : client->GetAimDownState();
-			Handle<IImage> focusPlayerViewIcon = (aimDownState > 0.99F) ? *playerADSViewIcon : *playerViewIcon;
+			// Copy the Handle instead of dereferencing it: RegisterImage can
+			// return a null Handle (e.g. Vulkan image upload failure), and
+			// `*handle` on a null Handle AddRef's a nullptr -> crash.
+			Handle<IImage> focusPlayerViewIcon =
+			    (aimDownState > 0.99F) ? playerADSViewIcon : playerViewIcon;
 
 			IFont& smallFont = client->fontManager->GetSmallFont();
 
@@ -614,14 +618,18 @@ namespace spades {
 					}
 				}
 
-				if (focusPlayerIsAlive || (focusPlayerIsLocal && localPlayerIsSpectating))
+				if (focusPlayerViewIcon &&
+				    (focusPlayerIsAlive || (focusPlayerIsLocal && localPlayerIsSpectating)))
 					DrawIcon(focusPlayerPos, *focusPlayerViewIcon, iconColorF * 0.7F, focusPlayerAngle);
-				DrawIcon(focusPlayerPos, *iconImg, iconColorF, focusPlayerAngle);
+				if (iconImg)
+					DrawIcon(focusPlayerPos, *iconImg, iconColorF, focusPlayerAngle);
 			} else if (localPlayerIsSpectating && isFreeCamera) {
 				// In demo free camera mode, draw a simple view indicator
 				Vector4 iconColorF = ModifyColor(spectatorColor) * largeMapAlpha;
-				DrawIcon(focusPlayerPos, *focusPlayerViewIcon, iconColorF * 0.7F, focusPlayerAngle);
-				DrawIcon(focusPlayerPos, *spectatorIcon, iconColorF, focusPlayerAngle);
+				if (focusPlayerViewIcon)
+					DrawIcon(focusPlayerPos, *focusPlayerViewIcon, iconColorF * 0.7F, focusPlayerAngle);
+				if (spectatorIcon)
+					DrawIcon(focusPlayerPos, *spectatorIcon, iconColorF, focusPlayerAngle);
 			}
 
 			// draw map objects
