@@ -793,6 +793,15 @@ namespace spades {
 
 			// --- Create dynamic light pipeline ---
 			{
+				VkPhysicalDeviceProperties devProps;
+				vkGetPhysicalDeviceProperties(device->GetPhysicalDevice(), &devProps);
+				if (sizeof(MapDlightPushConstants) > devProps.limits.maxPushConstantsSize) {
+					SPLog("Warning: map dlight push constants (%d) exceed device limit (%d); "
+					      "dynamic lights on map disabled",
+					      (int)sizeof(MapDlightPushConstants),
+					      (int)devProps.limits.maxPushConstantsSize);
+					return;
+				}
 				std::vector<uint32_t> dlVertCode = LoadSPIRVFile("Shaders/Vulkan/BasicBlockDynamicLit.vert.spv");
 				std::vector<uint32_t> dlFragCode = LoadSPIRVFile("Shaders/Vulkan/BasicBlockDynamicLit.frag.spv");
 

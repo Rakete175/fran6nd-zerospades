@@ -22,7 +22,9 @@
 
 layout(push_constant) uniform PushConstants {
 	mat4 projectionViewModelMatrix;
-	mat4 modelMatrix;
+	vec4 modelRow0;
+	vec4 modelRow1;
+	vec4 modelRow2;
 	vec3 modelOrigin;
 	float fogDensity;
 	vec3 customColor;
@@ -58,10 +60,15 @@ void main() {
 	gl_Position = pc.projectionViewModelMatrix * localPos;
 
 	// Compute world position for light calculation
-	vec3 worldPos = (pc.modelMatrix * localPos).xyz;
+	vec3 worldPos = vec3(dot(pc.modelRow0, localPos),
+	                     dot(pc.modelRow1, localPos),
+	                     dot(pc.modelRow2, localPos));
 
 	// World-space normal
-	vec3 normal = normalize(mat3(pc.modelMatrix) * normalize(vec3(normalAttribute)));
+	vec3 n0 = normalize(vec3(normalAttribute));
+	vec3 normal = normalize(vec3(dot(pc.modelRow0.xyz, n0),
+	                             dot(pc.modelRow1.xyz, n0),
+	                             dot(pc.modelRow2.xyz, n0)));
 	lightNormal = normal;
 
 	// Vertex color

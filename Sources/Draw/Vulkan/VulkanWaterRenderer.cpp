@@ -580,6 +580,7 @@ namespace spades {
 			return;
 
 		gameMap = map;
+		realizeAttempted = false; // new map: allow one fresh Realize attempt
 
 		// If we now have a valid map and textures don't exist, create them
 		if (gameMap && !textureImage) {
@@ -875,8 +876,11 @@ namespace spades {
 	void VulkanWaterRenderer::RenderSunlightPass(VkCommandBuffer commandBuffer) {
 		SPADES_MARK_FUNCTION();
 
-		// Lazy initialization: realize pipeline on first use
-		if (!waterPipeline) {
+		// Lazy initialization: realize pipeline on first use.
+		// Only try once — retrying every frame re-creates the descriptor pool
+		// and leaks/exhausts resources when realization keeps failing.
+		if (!waterPipeline && !realizeAttempted) {
+			realizeAttempted = true;
 			Realize();
 		}
 
@@ -969,8 +973,10 @@ namespace spades {
 
 		// Binding 6: mirrorTexture (for reflections) - dynamic, only for r_water >= 2
 		// Binding 7: mirrorDepthTexture (for depth-aware reflections) - dynamic, only for r_water >= 3
-		if ((int)r_water >= 2) {
+		if (waterProgram && waterProgram->HasBinding(6)) {
 			Handle<VulkanImage> mirrorColorImage = fbManager->GetWaterMirrorColorImage();
+			if (!mirrorColorImage)
+				mirrorColorImage = renderer.GetWhiteImage();
 			if (mirrorColorImage) {
 				imageInfos.push_back({});
 				imageInfos.back().imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -990,8 +996,10 @@ namespace spades {
 				SPLog("WARNING: mirrorColorImage is null, skipping binding 6");
 			}
 
-			if ((int)r_water >= 3) {
+			if (waterProgram && waterProgram->HasBinding(7)) {
 				Handle<VulkanImage> mirrorDepthImage = fbManager->GetWaterMirrorDepthImage();
+				if (!mirrorDepthImage)
+					mirrorDepthImage = renderer.GetWhiteImage();
 				if (mirrorDepthImage) {
 					imageInfos.push_back({});
 					imageInfos.back().imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1344,7 +1352,7 @@ namespace spades {
 		bufferInfos.reserve(1);   // waterMatricesUBO
 
 		// Binding 2: mainTexture (water color) - static
-		if (textureImage) {
+		if (textureImage && waterProgram && waterProgram->HasBinding(2)) {
 			imageInfos.push_back({});
 			imageInfos.back().imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			imageInfos.back().imageView = textureImage->GetImageView();
@@ -1361,8 +1369,23 @@ namespace spades {
 			staticWrites.push_back(mainTextureWrite);
 		}
 
-		// Binding 3/8: waveTexture or waveTextureArray - static
-		Handle<VulkanImage> activeWaveImage = waveImageArray ? waveImageArray : waveImage;
+		// Binding 3/8: waveTexture or waveTextureArray - static.
+		// The binding must exist in the program's layout AND the image type must
+		// match it (8 = sampler2DArray, 3 = sampler2D); r_water can change
+		// between resource creation and program selection, so decide from the
+		// layout, not from which image happens to exist.
+		bool wantArray = waterProgram && waterProgram->HasBinding(8);
+		bool wantSingle = waterProgram && waterProgram->HasBinding(3);
+		Handle<VulkanImage> activeWaveImage;
+		bool useArrayBinding = false;
+		if (wantArray && waveImageArray) {
+			activeWaveImage = waveImageArray;
+			useArrayBinding = true;
+		} else if (wantSingle && waveImage) {
+			activeWaveImage = waveImage;
+		} else if (wantArray || wantSingle) {
+			SPLog("Warning: water wave image type does not match shader layout; wave texture left unbound");
+		}
 		if (activeWaveImage) {
 			imageInfos.push_back({});
 			imageInfos.back().imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1373,7 +1396,7 @@ namespace spades {
 			VkWriteDescriptorSet waveTextureWrite{};
 			waveTextureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			waveTextureWrite.dstSet = descriptorSets[i];
-			waveTextureWrite.dstBinding = waveImageArray ? 8 : 3;
+			waveTextureWrite.dstBinding = useArrayBinding ? 8 : 3;
 			waveTextureWrite.dstArrayElement = 0;
 			waveTextureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			waveTextureWrite.descriptorCount = 1;
@@ -1382,7 +1405,8 @@ namespace spades {
 		}
 
 		// Binding 5: WaterMatricesUBO - buffer is static per frame index
-		if (waterMatricesUBOs[i]) {
+		if (i < waterMatricesUBOs.size() && waterMatricesUBOs[i] && waterProgram &&
+		    waterProgram->HasBinding(5)) {
 			bufferInfos.push_back({});
 			bufferInfos.back().buffer = waterMatricesUBOs[i]->GetBuffer();
 			bufferInfos.back().offset = 0;

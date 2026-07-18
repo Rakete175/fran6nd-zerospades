@@ -377,8 +377,13 @@ namespace spades {
 			std::vector<VkPhysicalDevice> devices(deviceCount);
 			vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-			// For now, just pick the first suitable device
-			// TODO: Implement device scoring to pick the best GPU
+			// Score suitable devices: discrete > integrated > virtual > CPU.
+			// Previously the first suitable device won, which on hybrid laptops
+			// selects the integrated GPU instead of the discrete one.
+			int bestScore = -1;
+			VkPhysicalDevice bestDev = VK_NULL_HANDLE;
+			uint32_t bestGraphicsQF = 0, bestPresentQF = 0;
+			char bestName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = {0};
 			for (const auto& dev : devices) {
 				VkPhysicalDeviceProperties properties;
 				vkGetPhysicalDeviceProperties(dev, &properties);
@@ -423,15 +428,31 @@ namespace spades {
 				}
 
 				if (foundGraphics && foundPresent && requiredExtensions.empty()) {
-					physicalDevice = dev;
-					SPLog("Selected GPU: %s", properties.deviceName);
-					break;
+					int score = 0;
+					switch (properties.deviceType) {
+						case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: score = 400; break;
+						case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: score = 300; break;
+						case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: score = 200; break;
+						case VK_PHYSICAL_DEVICE_TYPE_CPU: score = 100; break;
+						default: score = 50; break;
+					}
+					if (score > bestScore) {
+						bestScore = score;
+						bestDev = dev;
+						bestGraphicsQF = graphicsQueueFamily;
+						bestPresentQF = presentQueueFamily;
+						memcpy(bestName, properties.deviceName, sizeof(bestName));
+					}
 				}
 			}
 
-			if (physicalDevice == VK_NULL_HANDLE) {
+			if (bestDev == VK_NULL_HANDLE) {
 				SPRaise("Failed to find a suitable GPU");
 			}
+			physicalDevice = bestDev;
+			graphicsQueueFamily = bestGraphicsQF;
+			presentQueueFamily = bestPresentQF;
+			SPLog("Selected GPU: %s", bestName);
 		}
 
 		void SDLVulkanDevice::ResolveSampleCount() {
@@ -868,6 +889,7 @@ namespace spades {
 			int width = 0, height = 0;
 			SDL_GetWindowSize(window, &width, &height);
 			while (width == 0 || height == 0) {
+				SDL_PumpEvents(); // needed so SDL updates the cached size while minimized
 				SDL_GetWindowSize(window, &width, &height);
 				SDL_Delay(10);
 			}

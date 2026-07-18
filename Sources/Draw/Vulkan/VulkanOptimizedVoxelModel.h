@@ -54,9 +54,12 @@ namespace spades {
 			Matrix4 viewMatrix;
 			Vector3 viewOrigin;
 		};
-		struct ModelDlightPushConstants { // dynamic light pass (272 bytes)
+		struct ModelDlightPushConstants { // dynamic light pass (256 bytes)
 			Matrix4 projectionViewModelMatrix;
-			Matrix4 modelMatrix;
+			// model matrix packed as 3 rows (mat4x3) to fit maxPushConstantsSize=256
+			Vector4 modelRow0;
+			Vector4 modelRow1;
+			Vector4 modelRow2;
 			Vector3 modelOrigin;           float fogDensityVal;
 			Vector3 customColor;           float lightRadius;
 			Vector3 lightOrigin;           float lightTypeVal;
@@ -115,6 +118,9 @@ namespace spades {
 
 			static PipelineCache sharedPipeline;
 			static int pipelineRefCount;
+			// Handles replaced mid-frame; destroyed at a safe point (last dtor)
+			static std::vector<VkPipeline> retiredPipelines;
+			static std::vector<VkPipelineLayout> retiredLayouts;
 
 			VulkanRenderer& renderer;
 			Handle<gui::SDLVulkanDevice> device;

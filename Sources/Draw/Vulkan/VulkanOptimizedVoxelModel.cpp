@@ -43,6 +43,8 @@ namespace spades {
 	namespace draw {
 		// Initialize static members
 		VulkanOptimizedVoxelModel::PipelineCache VulkanOptimizedVoxelModel::sharedPipeline;
+		std::vector<VkPipeline> VulkanOptimizedVoxelModel::retiredPipelines;
+		std::vector<VkPipelineLayout> VulkanOptimizedVoxelModel::retiredLayouts;
 		int VulkanOptimizedVoxelModel::pipelineRefCount = 0;
 
 		void VulkanOptimizedVoxelModel::PreloadShaders(VulkanRenderer& renderer) {
@@ -242,6 +244,13 @@ namespace spades {
 					sharedPipeline.descriptorSetLayout = VK_NULL_HANDLE;
 				}
 				sharedPipeline.renderPass = VK_NULL_HANDLE;
+				vkDeviceWaitIdle(vkDevice);
+				for (VkPipeline p : retiredPipelines)
+					vkDestroyPipeline(vkDevice, p, nullptr);
+				retiredPipelines.clear();
+				for (VkPipelineLayout l : retiredLayouts)
+					vkDestroyPipelineLayout(vkDevice, l, nullptr);
+				retiredLayouts.clear();
 			}
 		}
 
@@ -1033,7 +1042,10 @@ namespace spades {
 						const auto& ay = param.matrix.GetAxis(1);
 						const auto& az = param.matrix.GetAxis(2);
 						bool isMirrored = Vector3::Dot(Vector3::Cross(ax, ay), az) < 0.0F;
-						bindDlightPipeline(isMirrored ? sharedPipeline.mirroredDlightPipeline : sharedPipeline.dlightPipeline);
+						VkPipeline p = (isMirrored && sharedPipeline.mirroredDlightPipeline != VK_NULL_HANDLE)
+						                   ? sharedPipeline.mirroredDlightPipeline
+						                   : sharedPipeline.dlightPipeline;
+						bindDlightPipeline(p);
 					}
 
 					Matrix4 mvpMatrix = projectionViewMatrix * param.matrix;
@@ -1048,7 +1060,12 @@ namespace spades {
 					ModelDlightPushConstants pushConstants;
 
 					pushConstants.projectionViewModelMatrix = mvpMatrix;
-					pushConstants.modelMatrix = param.matrix;
+					{
+						const float* mm = param.matrix.m; // column-major
+						pushConstants.modelRow0 = MakeVector4(mm[0], mm[4], mm[8], mm[12]);
+						pushConstants.modelRow1 = MakeVector4(mm[1], mm[5], mm[9], mm[13]);
+						pushConstants.modelRow2 = MakeVector4(mm[2], mm[6], mm[10], mm[14]);
+					}
 					pushConstants.modelOrigin = origin;
 					pushConstants.fogDensityVal = fogDensity;
 					pushConstants.customColor = param.customColor;
@@ -1083,16 +1100,32 @@ namespace spades {
 		void VulkanOptimizedVoxelModel::CreatePipeline(VkRenderPass renderPass) {
 			SPADES_MARK_FUNCTION();
 
-			// Clean up old pipeline if render pass changed
+			// Render pass changed: the old handles may still be referenced by the
+			// command buffer currently being recorded, so destroying them here (or
+			// vkDeviceWaitIdle mid-recording) is invalid. Retire them instead.
 			VkDevice vkDevice = device->GetDevice();
 			if (sharedPipeline.pipeline != VK_NULL_HANDLE && sharedPipeline.renderPass != renderPass) {
-				// Wait for GPU to finish using the old pipeline before destroying it
-				vkDeviceWaitIdle(vkDevice);
-				vkDestroyPipeline(vkDevice, sharedPipeline.pipeline, nullptr);
+				retiredPipelines.push_back(sharedPipeline.pipeline);
 				sharedPipeline.pipeline = VK_NULL_HANDLE;
+				if (sharedPipeline.mirroredPipeline != VK_NULL_HANDLE) {
+					retiredPipelines.push_back(sharedPipeline.mirroredPipeline);
+					sharedPipeline.mirroredPipeline = VK_NULL_HANDLE;
+				}
+				if (sharedPipeline.dlightPipeline != VK_NULL_HANDLE) {
+					retiredPipelines.push_back(sharedPipeline.dlightPipeline);
+					sharedPipeline.dlightPipeline = VK_NULL_HANDLE;
+				}
+				if (sharedPipeline.mirroredDlightPipeline != VK_NULL_HANDLE) {
+					retiredPipelines.push_back(sharedPipeline.mirroredDlightPipeline);
+					sharedPipeline.mirroredDlightPipeline = VK_NULL_HANDLE;
+				}
 				if (sharedPipeline.pipelineLayout != VK_NULL_HANDLE) {
-					vkDestroyPipelineLayout(vkDevice, sharedPipeline.pipelineLayout, nullptr);
+					retiredLayouts.push_back(sharedPipeline.pipelineLayout);
 					sharedPipeline.pipelineLayout = VK_NULL_HANDLE;
+				}
+				if (sharedPipeline.dlightPipelineLayout != VK_NULL_HANDLE) {
+					retiredLayouts.push_back(sharedPipeline.dlightPipelineLayout);
+					sharedPipeline.dlightPipelineLayout = VK_NULL_HANDLE;
 				}
 			}
 
@@ -1394,7 +1427,14 @@ namespace spades {
 			SPLog("Created shared model rendering pipeline (vertex colors)");
 
 			// --- Create dynamic light pipeline ---
-			{
+			VkPhysicalDeviceProperties devProps;
+			vkGetPhysicalDeviceProperties(device->GetPhysicalDevice(), &devProps);
+			if (sizeof(ModelDlightPushConstants) > devProps.limits.maxPushConstantsSize) {
+				SPLog("Warning: model dlight push constants (%d) exceed device limit (%d); "
+				      "dynamic lights on models disabled",
+				      (int)sizeof(ModelDlightPushConstants),
+				      (int)devProps.limits.maxPushConstantsSize);
+			} else {
 				std::vector<uint32_t> dlVertCode = LoadSPIRVFile("Shaders/Vulkan/ModelDynamicLit.vert.spv");
 				std::vector<uint32_t> dlFragCode = LoadSPIRVFile("Shaders/Vulkan/ModelDynamicLit.frag.spv");
 

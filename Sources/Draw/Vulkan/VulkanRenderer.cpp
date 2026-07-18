@@ -990,10 +990,16 @@ namespace spades {
 			currentFrameSlot = device->GetCurrentFrame();
 			vkWaitForFences(device->GetDevice(), 1, &inFlightFences[currentFrameSlot], VK_TRUE, UINT64_MAX);
 
+			// Swapchain generation changed (e.g. Alt-Tab): rebuild before acquiring.
+			if (device->GetSwapchainGeneration() != lastSwapchainGeneration) {
+				RecreateSwapchainDependencies();
+			}
+
 			// Acquire next swapchain image
 			currentImageIndex = device->AcquireNextImage(&imageAvailableSemaphore, &renderFinishedSemaphore);
 			if (currentImageIndex == UINT32_MAX) {
-				// Swapchain was recreated, try again
+				// Acquire recreated the swapchain; rebuild before retrying.
+				RecreateSwapchainDependencies();
 				currentImageIndex = device->AcquireNextImage(&imageAvailableSemaphore, &renderFinishedSemaphore);
 			}
 			// A second failure (e.g. repeated OUT_OF_DATE mid-resize, or a 0x0

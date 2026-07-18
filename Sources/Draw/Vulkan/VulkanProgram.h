@@ -98,6 +98,15 @@ namespace spades {
 			const std::vector<VkPipelineShaderStageCreateInfo>& GetShaderStages() const { return shaderStages; }
 
 			VkDescriptorSetLayout GetDescriptorSetLayout() const { return descriptorSetLayout; }
+			// True if the reflected descriptor set layout declares this binding.
+			// Writing descriptors to bindings absent from the layout is undefined
+			// behavior (crashes RADV), so callers must check first.
+			bool HasBinding(uint32_t b) const {
+				for (const auto& d : descriptorBindings)
+					if (d.binding == b)
+						return true;
+				return false;
+			}
 			VkPipelineLayout GetPipelineLayout() const { return pipelineLayout; }
 
 			// Query uniform blocks and texture bindings

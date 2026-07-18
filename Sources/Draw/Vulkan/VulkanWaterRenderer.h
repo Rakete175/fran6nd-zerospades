@@ -47,6 +47,7 @@ namespace spades {
 			// Shader program and pipeline
 			VulkanProgram* waterProgram;
 			Handle<VulkanPipeline> waterPipeline;
+			bool realizeAttempted = false;
 			VkDescriptorPool descriptorPool;
 			std::vector<VkDescriptorSet> descriptorSets; // Per frame
 

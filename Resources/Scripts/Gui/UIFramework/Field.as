@@ -174,6 +174,8 @@ namespace spades {
 					string text = Text;
 					int cursorPos = CursorPosition;
 					Font@ font = this.Font;
+					if (font is null)
+						return AABB2(textPos.x, textPos.y, siz.x - textPos.x, 16.0F);
 					float width = font.Measure(text.substr(0, cursorPos)).x;
 					float fontHeight = font.Measure("A").y;
 					return AABB2(textPos.x + width, textPos.y, siz.x - textPos.x - width, fontHeight);

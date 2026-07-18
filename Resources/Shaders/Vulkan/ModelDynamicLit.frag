@@ -22,7 +22,9 @@
 
 layout(push_constant) uniform PushConstants {
 	mat4 projectionViewModelMatrix;
-	mat4 modelMatrix;
+	vec4 modelRow0;
+	vec4 modelRow1;
+	vec4 modelRow2;
 	vec3 modelOrigin;
 	float fogDensity;
 	vec3 customColor;
