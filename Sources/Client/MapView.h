@@ -50,7 +50,7 @@ namespace spades {
 
 			Vector2 Project(const Vector2&) const;
 
-			void DrawIcon(Vector3 pos, IImage& img, const Vector4&, float rotation = 0.0F);
+			void DrawIcon(Vector3 pos, IImage* img, const Vector4&, float rotation = 0.0F);
 			void DrawText(IFont& font, std::string s, Vector3 pos, const Vector4&);
 
 		public:

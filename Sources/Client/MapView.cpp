@@ -150,7 +150,12 @@ namespace spades {
 			return scrPos;
 		}
 
-		void MapView::DrawIcon(Vector3 pos, IImage& img, const Vector4& col, float rotation) {
+		void MapView::DrawIcon(Vector3 pos, IImage* imgPtr, const Vector4& col, float rotation) {
+			// imgPtr can be null when RegisterImage failed (e.g. Vulkan image
+			// creation/upload failure). Drawing nothing beats crashing.
+			if (!imgPtr)
+				return;
+			IImage& img = *imgPtr;
 			if ((int)cg_minimapPlayerIcon >= 2 && rotation == 0.0F) {
 				pos.x = Clamp(pos.x, inRect.GetMinX(), inRect.GetMaxX());
 				pos.y = Clamp(pos.y, inRect.GetMinY(), inRect.GetMaxY());
@@ -468,7 +473,9 @@ namespace spades {
 			// draw bullet tracers
 			Handle<IImage> tracerImg = renderer.RegisterImage("Gfx/White.tga");
 			const float tracerW = 0.5F;
-			const AABB2 tracerInRect{0.0F, 0.0F, tracerImg->GetWidth(), tracerImg->GetHeight()};
+			const AABB2 tracerInRect{0.0F, 0.0F,
+				tracerImg ? tracerImg->GetWidth() : 1.0F,
+				tracerImg ? tracerImg->GetHeight() : 1.0F};
 
 			renderer.SetColorAlphaPremultiplied(MakeVector4(1, 1, 0, 1) * largeMapAlpha);
 			for (const auto& localEntity : client->localEntities) {
@@ -574,7 +581,7 @@ namespace spades {
 				const auto& pos = p.GetPosition();
 				const auto& ori = p.GetFront2D();
 				float playerAngle = atan2f(ori.y, ori.x) + M_PI_F * 0.5F;
-				DrawIcon(pos, *iconImg, iconColorF, playerAngle);
+				DrawIcon(pos, iconImg.GetPointerOrNull(), iconColorF, playerAngle);
 
 				// dont draw the focused player name when following non-local players
 				if (isFocusedPlayer && isFollowingNonLocal)
@@ -620,16 +627,16 @@ namespace spades {
 
 				if (focusPlayerViewIcon &&
 				    (focusPlayerIsAlive || (focusPlayerIsLocal && localPlayerIsSpectating)))
-					DrawIcon(focusPlayerPos, *focusPlayerViewIcon, iconColorF * 0.7F, focusPlayerAngle);
+					DrawIcon(focusPlayerPos, focusPlayerViewIcon.GetPointerOrNull(), iconColorF * 0.7F, focusPlayerAngle);
 				if (iconImg)
-					DrawIcon(focusPlayerPos, *iconImg, iconColorF, focusPlayerAngle);
+					DrawIcon(focusPlayerPos, iconImg.GetPointerOrNull(), iconColorF, focusPlayerAngle);
 			} else if (localPlayerIsSpectating && isFreeCamera) {
 				// In demo free camera mode, draw a simple view indicator
 				Vector4 iconColorF = ModifyColor(spectatorColor) * largeMapAlpha;
 				if (focusPlayerViewIcon)
-					DrawIcon(focusPlayerPos, *focusPlayerViewIcon, iconColorF * 0.7F, focusPlayerAngle);
+					DrawIcon(focusPlayerPos, focusPlayerViewIcon.GetPointerOrNull(), iconColorF * 0.7F, focusPlayerAngle);
 				if (spectatorIcon)
-					DrawIcon(focusPlayerPos, *spectatorIcon, iconColorF, focusPlayerAngle);
+					DrawIcon(focusPlayerPos, spectatorIcon.GetPointerOrNull(), iconColorF, focusPlayerAngle);
 			}
 
 			// draw map objects
@@ -644,17 +651,17 @@ namespace spades {
 
 					// draw base
 					Vector4 teamColorF = ModifyColor(world->GetTeamColor(tId)) * largeMapAlpha;
-					DrawIcon(team1.basePos, *baseIcon, teamColorF);
+					DrawIcon(team1.basePos, baseIcon.GetPointerOrNull(), teamColorF);
 
 					// draw both flags
 					if (team2.hasIntel) {
 						stmp::optional<Player&> carrier = world->GetPlayer(team2.carrierId);
 						if (carrier && (localPlayerIsSpectating || (localPlayer && carrier->IsTeammate(*localPlayer)))) {
 							float pulse = std::max(0.5F, fabsf(sinf(world->GetTime() * 4.0F)));
-							DrawIcon(carrier->GetPosition(), *intelIcon, teamColorF * pulse);
+							DrawIcon(carrier->GetPosition(), intelIcon.GetPointerOrNull(), teamColorF * pulse);
 						}
 					} else {
-						DrawIcon(team1.flagPos, *intelIcon, teamColorF);
+						DrawIcon(team1.flagPos, intelIcon.GetPointerOrNull(), teamColorF);
 					}
 				}
 			} else if (mode && mode->ModeType() == IGameMode::m_TC) {
@@ -666,7 +673,7 @@ namespace spades {
 											 : world->GetTeamColor(t.ownerTeamId);
 
 					Vector4 teamColorF = ModifyColor(teamColor) * largeMapAlpha;
-					DrawIcon(t.pos, *baseIcon, teamColorF);
+					DrawIcon(t.pos, baseIcon.GetPointerOrNull(), teamColorF);
 				}
 			}
 

@@ -884,8 +884,8 @@ namespace spades {
 			Realize();
 		}
 
-		if (!waterPipeline || numIndices == 0) {
-			SPLog("Early return: waterPipeline or numIndices is 0");
+		if (!waterPipeline || numIndices == 0 || !vertexBuffer || !indexBuffer) {
+			SPLog("Early return: waterPipeline, mesh buffers, or numIndices missing");
 			return;
 		}
 
