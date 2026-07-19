@@ -123,5 +123,23 @@ namespace spades {
 			vkCmdCopyBuffer(commandBuffer, srcBuffer.GetBuffer(), buffer, 1, &copyRegion);
 		}
 
+		Handle<VulkanBuffer> VulkanBuffer::CreateDeviceLocal(Handle<gui::SDLVulkanDevice> device,
+		                                                    const void* data, VkDeviceSize size,
+		                                                    VkBufferUsageFlags usage) {
+			Handle<VulkanBuffer> staging = Handle<VulkanBuffer>::New(
+			    device, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			staging->UpdateData(data, size);
+
+			Handle<VulkanBuffer> gpu = Handle<VulkanBuffer>::New(
+			    device, size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+			device->ImmediateSubmit([&](VkCommandBuffer cmd) {
+				gpu->CopyFrom(*staging, cmd, 0, 0, size);
+			});
+			return gpu;
+		}
+
 	} // namespace draw
 } // namespace spades

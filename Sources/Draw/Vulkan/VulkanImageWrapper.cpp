@@ -47,7 +47,6 @@ namespace spades {
 			}
 
 			auto device = image->GetDevice();
-			VkDevice vkDevice = device->GetDevice();
 
 			uint32_t updateWidth = bmp.GetWidth();
 			uint32_t updateHeight = bmp.GetHeight();
@@ -73,65 +72,31 @@ namespace spades {
 			// Copy flipped bitmap data to staging buffer
 			stagingBuffer->UpdateData(flippedData.data(), imageSize);
 
-			// Create temporary command buffer
-			VkCommandBufferAllocateInfo allocInfo{};
-			allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-			allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-			allocInfo.commandPool = device->GetCommandPool();
-			allocInfo.commandBufferCount = 1;
-
-			VkCommandBuffer commandBuffer;
-			if (vkAllocateCommandBuffers(vkDevice, &allocInfo, &commandBuffer) != VK_SUCCESS) {
-				SPRaise("Failed to allocate command buffer for image mipmaps");
-			}
-
-			VkCommandBufferBeginInfo beginInfo{};
-			beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-			beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-			if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-				SPRaise("Failed to begin command buffer for image mipmaps");
-			}
-
-			// Transition to transfer dst layout
-			image->TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-			// Copy buffer to image region
-			VkBufferImageCopy region{};
-			region.bufferOffset = 0;
-			region.bufferRowLength = 0;
-			region.bufferImageHeight = 0;
-			region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			region.imageSubresource.mipLevel = 0;
-			region.imageSubresource.baseArrayLayer = 0;
-			region.imageSubresource.layerCount = 1;
-			// Note: The atlas image was created with vertically flipped data (OpenGL->Vulkan conversion)
-			// So we need to flip the Y coordinate: bottom-left origin (y) -> top-left origin
 			int flippedY = static_cast<int>(height) - y - static_cast<int>(updateHeight);
-			region.imageOffset = {x, flippedY, 0};
-			region.imageExtent = {updateWidth, updateHeight, 1};
 
-			vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->GetBuffer(),
-				image->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+			device->ImmediateSubmit([&](VkCommandBuffer commandBuffer) {
+				image->TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+					VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-			// Transition back to shader read layout
-			image->TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+				VkBufferImageCopy region{};
+				region.bufferOffset = 0;
+				region.bufferRowLength = 0;
+				region.bufferImageHeight = 0;
+				region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+				region.imageSubresource.mipLevel = 0;
+				region.imageSubresource.baseArrayLayer = 0;
+				region.imageSubresource.layerCount = 1;
+				region.imageOffset = {x, flippedY, 0};
+				region.imageExtent = {updateWidth, updateHeight, 1};
 
-			vkEndCommandBuffer(commandBuffer);
+				vkCmdCopyBufferToImage(commandBuffer, stagingBuffer->GetBuffer(),
+					image->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-			// Submit and wait
-			VkSubmitInfo submitInfo{};
-			submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-			submitInfo.commandBufferCount = 1;
-			submitInfo.pCommandBuffers = &commandBuffer;
-
-			vkQueueSubmit(device->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-			vkQueueWaitIdle(device->GetGraphicsQueue());
-
-			vkFreeCommandBuffers(vkDevice, device->GetCommandPool(), 1, &commandBuffer);
+				image->TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+			});
 		}
 
 	} // namespace draw

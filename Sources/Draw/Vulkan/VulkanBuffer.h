@@ -61,6 +61,10 @@ namespace spades {
 			// Copy from another buffer using command buffer
 			void CopyFrom(VulkanBuffer& srcBuffer, VkCommandBuffer commandBuffer, VkDeviceSize srcOffset = 0,
 			              VkDeviceSize dstOffset = 0, VkDeviceSize copySize = VK_WHOLE_SIZE);
+
+			static Handle<VulkanBuffer> CreateDeviceLocal(Handle<gui::SDLVulkanDevice> device,
+			                                              const void* data, VkDeviceSize size,
+			                                              VkBufferUsageFlags usage);
 		};
 
 	} // namespace draw

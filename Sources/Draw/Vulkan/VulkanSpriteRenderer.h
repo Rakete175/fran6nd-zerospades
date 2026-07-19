@@ -79,6 +79,11 @@ namespace spades {
 			std::vector<std::vector<Handle<VulkanBuffer>>> perFrameBuffers;
 			std::vector<std::vector<VulkanImage*>> perFrameImages;
 
+			std::vector<Handle<VulkanBuffer>> frameVertexBuffers;
+			std::vector<Handle<VulkanBuffer>> frameIndexBuffers;
+			std::vector<size_t> frameVertexOffsets;
+			std::vector<size_t> frameIndexOffsets;
+
 			VkDescriptorSet depthDescriptorSet;
 
 			void CreatePipeline();

@@ -1,0 +1,33 @@
+Vulkan: cull, batch, and device-local perf pass + sync cleanup
+
+Reduce per-frame CPU/GPU waste in the Vulkan backend and remove a few
+fragile one-shot-submit patterns. Behavior-preserving; no SPIR-V changes.
+
+Rendering
+- Map: frustum-cull chunks in the sunlight and dynamic-light passes
+  (was distance-only, drew chunks behind the camera). Depth/shadow
+  pass left alone since it uses the light frustum.
+- Dynamic lights: skip lights outside the frustum and chunks outside
+  a light's radius; small flashes no longer walk the whole chunk grid.
+
+Allocation / bandwidth
+- Sprites + long sprites: per-frame ring buffers replace the
+  per-batch buffer allocation done every frame.
+- Voxel models: vertex/index buffers moved to DEVICE_LOCAL (static,
+  built once) instead of being read over PCIe each frame.
+
+Synchronization
+- Add SDLVulkanDevice::ImmediateSubmit(): fence-checked one-shot
+  submit, replacing bare vkQueueSubmit+vkQueueWaitIdle.
+- Add VulkanBuffer::CreateDeviceLocal(): staging -> DEVICE_LOCAL.
+- Route VulkanImageWrapper and VulkanMapShadowRenderer uploads
+  through ImmediateSubmit (removes silent blank-texture risk).
+
+Misc
+- Pass model params/lights by const-ref through the model and map
+  draw paths (was a full vector copy per model, per pass, per frame).
+- Honor r_vsync on the Vulkan path: 0 -> IMMEDIATE, else MAILBOX/FIFO
+  (was hardcoded MAILBOX).
+
+Deferred (see TODO.md): map-chunk DEVICE_LOCAL upload, async glyph
+streaming, GPU instancing of voxel models.

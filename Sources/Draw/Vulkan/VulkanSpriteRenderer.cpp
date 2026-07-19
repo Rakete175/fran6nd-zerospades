@@ -88,6 +88,10 @@ namespace spades {
 			perFrameDescriptorPools.resize(swapchainImageViews.size(), VK_NULL_HANDLE);
 			perFrameBuffers.resize(swapchainImageViews.size());
 			perFrameImages.resize(swapchainImageViews.size());
+			frameVertexBuffers.resize(swapchainImageViews.size());
+			frameIndexBuffers.resize(swapchainImageViews.size());
+			frameVertexOffsets.resize(swapchainImageViews.size(), 0);
+			frameIndexOffsets.resize(swapchainImageViews.size(), 0);
 
 			CreatePipeline();
 			CreateDescriptorSet();
@@ -419,28 +423,45 @@ namespace spades {
 			VkDevice vkDevice = device->GetDevice();
 
 			size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
-			Handle<VulkanBuffer> vertexBuffer(
-				new VulkanBuffer(device, vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-				false);
-			vertexBuffer->UpdateData(vertices.data(), vertexBufferSize);
-			perFrameBuffers[frameIndex].push_back(vertexBuffer);
-
 			size_t indexBufferSize = indices.size() * sizeof(uint32_t);
-			Handle<VulkanBuffer> indexBuffer(
-				new VulkanBuffer(device, indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-				false);
-			indexBuffer->UpdateData(indices.data(), indexBufferSize);
-			perFrameBuffers[frameIndex].push_back(indexBuffer);
+
+			auto ensure = [&](Handle<VulkanBuffer>& buf, size_t& off, size_t need,
+			                  VkBufferUsageFlags usage) {
+				if (!buf || off + need > buf->GetSize()) {
+					if (buf)
+						perFrameBuffers[frameIndex].push_back(buf);
+					size_t cap = buf ? (size_t)buf->GetSize() * 2 : (size_t)65536;
+					while (cap < need)
+						cap *= 2;
+					buf = Handle<VulkanBuffer>::New(
+					    device, cap, usage,
+					    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+					off = 0;
+				}
+			};
+
+			ensure(frameVertexBuffers[frameIndex], frameVertexOffsets[frameIndex],
+			       vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+			ensure(frameIndexBuffers[frameIndex], frameIndexOffsets[frameIndex],
+			       indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+			Handle<VulkanBuffer>& vertexBuffer = frameVertexBuffers[frameIndex];
+			Handle<VulkanBuffer>& indexBuffer = frameIndexBuffers[frameIndex];
+			size_t vOff = frameVertexOffsets[frameIndex];
+			size_t iOff = frameIndexOffsets[frameIndex];
+			vertexBuffer->UpdateData(vertices.data(), vertexBufferSize, vOff);
+			indexBuffer->UpdateData(indices.data(), indexBufferSize, iOff);
+			frameVertexOffsets[frameIndex] += vertexBufferSize;
+			frameIndexOffsets[frameIndex] += indexBufferSize;
 
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
 			VkBuffer vb = vertexBuffer->GetBuffer();
-			VkDeviceSize offsets[] = {0};
+			VkDeviceSize offsets[] = {(VkDeviceSize)vOff};
 			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb, offsets);
 
-			vkCmdBindIndexBuffer(commandBuffer, indexBuffer->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
+			vkCmdBindIndexBuffer(commandBuffer, indexBuffer->GetBuffer(), (VkDeviceSize)iOff,
+			                     VK_INDEX_TYPE_UINT32);
 
 			// Allocate and bind sprite texture descriptor (set 0)
 			VkDescriptorSetAllocateInfo allocInfo{};
@@ -554,6 +575,8 @@ namespace spades {
 
 			// Clear resources from this frame (GPU has finished with them due to fence wait)
 			perFrameBuffers[frameIndex].clear();
+			frameVertexOffsets[frameIndex] = 0;
+			frameIndexOffsets[frameIndex] = 0;
 
 			// Release images from previous use of this frame
 			for (auto* img : perFrameImages[frameIndex]) {

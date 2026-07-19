@@ -25,6 +25,7 @@
 #if USE_VULKAN
 
 #include <vector>
+#include <functional>
 #include <vulkan/vulkan.h>
 #include <Imports/SDL.h>
 #include <Core/RefCountedObject.h>
@@ -132,6 +133,8 @@ namespace spades {
 			VkImage GetSwapchainImage(uint32_t index) const { return swapchainImages[index]; }
 			VkCommandPool GetCommandPool() const { return commandPool; }
 			uint32_t GetGraphicsQueueFamily() const { return graphicsQueueFamily; }
+
+			void ImmediateSubmit(const std::function<void(VkCommandBuffer)>& record);
 
 			// Frame management
 			uint32_t AcquireNextImage(VkSemaphore* outImageAvailableSemaphore, VkSemaphore* outRenderFinishedSemaphore);
