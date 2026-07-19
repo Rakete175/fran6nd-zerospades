@@ -150,25 +150,15 @@ namespace spades {
 			// Create vertex buffer
 			if (!vertices.empty()) {
 				size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
-				vertexBuffer = Handle<VulkanBuffer>::New(
-				    device, vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-				void* data = vertexBuffer->Map();
-				memcpy(data, vertices.data(), vertexBufferSize);
-				vertexBuffer->Unmap();
+				vertexBuffer = VulkanBuffer::CreateDeviceLocal(
+				    device, vertices.data(), vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 			}
 
 			// Create index buffer
 			if (!indices.empty()) {
 				size_t indexBufferSize = indices.size() * sizeof(uint32_t);
-				indexBuffer = Handle<VulkanBuffer>::New(
-				    device, indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-				void* data = indexBuffer->Map();
-				memcpy(data, indices.data(), indexBufferSize);
-				indexBuffer->Unmap();
+				indexBuffer = VulkanBuffer::CreateDeviceLocal(
+				    device, indices.data(), indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 			}
 
 			origin = m->GetOrigin();
@@ -437,7 +427,7 @@ namespace spades {
 		}
 
 		void VulkanOptimizedVoxelModel::Prerender(VkCommandBuffer commandBuffer,
-		                                          std::vector<client::ModelRenderParam> params,
+		                                          const std::vector<client::ModelRenderParam>& params,
 		                                          bool ghostPass) {
 			SPADES_MARK_FUNCTION();
 
@@ -563,7 +553,7 @@ namespace spades {
 		}
 
 		void VulkanOptimizedVoxelModel::RenderShadowMapPass(VkCommandBuffer commandBuffer,
-		                                                    std::vector<client::ModelRenderParam> params,
+		                                                    const std::vector<client::ModelRenderParam>& params,
 		                                                    const Matrix4& lightMatrix,
 		                                                    VkRenderPass shadowRenderPass) {
 			SPADES_MARK_FUNCTION();
@@ -794,7 +784,7 @@ namespace spades {
 		}
 
 		void VulkanOptimizedVoxelModel::RenderSunlightPass(VkCommandBuffer commandBuffer,
-		                                                   std::vector<client::ModelRenderParam> params,
+		                                                   const std::vector<client::ModelRenderParam>& params,
 		                                                   bool ghostPass) {
 			SPADES_MARK_FUNCTION();
 
@@ -946,8 +936,8 @@ namespace spades {
 		}
 
 		void VulkanOptimizedVoxelModel::RenderDynamicLightPass(VkCommandBuffer commandBuffer,
-		                                                       std::vector<client::ModelRenderParam> params,
-		                                                       std::vector<void*> lights) {
+		                                                       const std::vector<client::ModelRenderParam>& params,
+		                                                       const std::vector<void*>& lights) {
 			SPADES_MARK_FUNCTION();
 
 			if (numIndices == 0 || !vertexBuffer || !indexBuffer)

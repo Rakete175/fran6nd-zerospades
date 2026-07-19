@@ -162,18 +162,18 @@ namespace spades {
 			static void InvalidateSharedPipeline(gui::SDLVulkanDevice* device);
 
 			void Prerender(VkCommandBuffer commandBuffer,
-			               std::vector<client::ModelRenderParam> params,
+			               const std::vector<client::ModelRenderParam>& params,
 			               bool ghostPass) override;
 			void RenderShadowMapPass(VkCommandBuffer commandBuffer,
-			                         std::vector<client::ModelRenderParam> params,
+			                         const std::vector<client::ModelRenderParam>& params,
 			                         const Matrix4& lightMatrix,
 			                         VkRenderPass shadowRenderPass) override;
 			void RenderSunlightPass(VkCommandBuffer commandBuffer,
-			                        std::vector<client::ModelRenderParam> params,
+			                        const std::vector<client::ModelRenderParam>& params,
 			                        bool ghostPass) override;
 			void RenderDynamicLightPass(VkCommandBuffer commandBuffer,
-			                            std::vector<client::ModelRenderParam> params,
-			                            std::vector<void*> lights) override;
+			                            const std::vector<client::ModelRenderParam>& params,
+			                            const std::vector<void*>& lights) override;
 
 			IntVector3 GetDimensions() override { return dimensions; }
 			AABB3 GetBoundingBox() override { return boundingBox; }

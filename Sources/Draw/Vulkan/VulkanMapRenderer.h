@@ -142,7 +142,7 @@ namespace spades {
 			void Realize();
 			void Prerender();
 			void RenderSunlightPass(VkCommandBuffer commandBuffer);
-			void RenderDynamicLightPass(VkCommandBuffer commandBuffer, std::vector<void*> lights);
+			void RenderDynamicLightPass(VkCommandBuffer commandBuffer, const std::vector<void*>& lights);
 			void RenderDepthPass(VkCommandBuffer commandBuffer);
 			void RenderShadowMapPass(VkCommandBuffer commandBuffer, VkPipelineLayout shadowPipelineLayout);
 

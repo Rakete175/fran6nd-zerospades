@@ -33,6 +33,7 @@
 #include <SDL2/SDL_vulkan.h>
 
 SPADES_SETTING(r_multisamples);
+SPADES_SETTING(r_vsync);
 
 #if defined(__APPLE__) && defined(__x86_64__)
 // MoltenVK global-configuration API, used to disable MTLHeap on Intel Macs.
@@ -667,13 +668,22 @@ namespace spades {
 				}
 			}
 
-			// Choose present mode (prefer MAILBOX for lower latency, fall back to FIFO)
+			// Present mode: r_vsync=0 wants uncapped (IMMEDIATE, tearing allowed);
+			// r_vsync!=0 wants vsync — prefer MAILBOX (low-latency, no tearing) then FIFO.
+			auto hasMode = [&](VkPresentModeKHR m) {
+				for (const auto& p : presentModes)
+					if (p == m) return true;
+				return false;
+			};
 			VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
-			for (const auto& availablePresentMode : presentModes) {
-				if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-					presentMode = availablePresentMode;
-					break;
-				}
+			if ((int)r_vsync == 0) {
+				if (hasMode(VK_PRESENT_MODE_IMMEDIATE_KHR))
+					presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+				else if (hasMode(VK_PRESENT_MODE_MAILBOX_KHR))
+					presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+			} else {
+				if (hasMode(VK_PRESENT_MODE_MAILBOX_KHR))
+					presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 			}
 
 			// Choose swap extent
@@ -883,6 +893,59 @@ namespace spades {
 		void SDLVulkanDevice::WaitForFences() {
 			vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 			vkResetFences(device, 1, &inFlightFences[currentFrame]);
+		}
+
+		void SDLVulkanDevice::ImmediateSubmit(const std::function<void(VkCommandBuffer)>& record) {
+			VkCommandBufferAllocateInfo allocInfo{};
+			allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+			allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			allocInfo.commandPool = commandPool;
+			allocInfo.commandBufferCount = 1;
+
+			VkCommandBuffer cmd = VK_NULL_HANDLE;
+			if (vkAllocateCommandBuffers(device, &allocInfo, &cmd) != VK_SUCCESS)
+				SPRaise("ImmediateSubmit: failed to allocate command buffer");
+
+			VkCommandBufferBeginInfo beginInfo{};
+			beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+			if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) {
+				vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+				SPRaise("ImmediateSubmit: failed to begin command buffer");
+			}
+
+			record(cmd);
+
+			if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+				vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+				SPRaise("ImmediateSubmit: failed to end command buffer");
+			}
+
+			VkFenceCreateInfo fenceInfo{};
+			fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+			VkFence fence = VK_NULL_HANDLE;
+			vkCreateFence(device, &fenceInfo, nullptr, &fence);
+
+			VkSubmitInfo submitInfo{};
+			submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+			submitInfo.commandBufferCount = 1;
+			submitInfo.pCommandBuffers = &cmd;
+
+			VkResult submitRes = vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence);
+			VkResult waitRes = VK_SUCCESS;
+			if (submitRes == VK_SUCCESS) {
+				waitRes = (fence != VK_NULL_HANDLE)
+				              ? vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX)
+				              : vkQueueWaitIdle(graphicsQueue);
+			}
+			if (fence != VK_NULL_HANDLE)
+				vkDestroyFence(device, fence, nullptr);
+			vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+
+			if (submitRes != VK_SUCCESS)
+				SPRaise("ImmediateSubmit: queue submit failed (error %d)", submitRes);
+			if (waitRes != VK_SUCCESS)
+				SPRaise("ImmediateSubmit: wait failed (error %d)", waitRes);
 		}
 
 		void SDLVulkanDevice::RecreateSwapchain() {

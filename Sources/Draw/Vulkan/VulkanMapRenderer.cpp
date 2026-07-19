@@ -275,7 +275,7 @@ namespace spades {
 		}
 
 		void VulkanMapRenderer::RenderDynamicLightPass(VkCommandBuffer commandBuffer,
-		                                               std::vector<void*> lights) {
+		                                               const std::vector<void*>& lights) {
 			SPADES_MARK_FUNCTION();
 
 			if (lights.empty())
@@ -297,6 +297,9 @@ namespace spades {
 			for (void* lightPtr : lights) {
 				const client::DynamicLightParam* light =
 				    static_cast<const client::DynamicLightParam*>(lightPtr);
+
+				if (!renderer.SphereFrustrumCull(light->origin, light->radius))
+					continue;
 
 				// Bind this light's spotlight cookie (set 0). Point/linear lights
 				// have no image and fall back to the 1x1 white texture.
@@ -399,10 +402,16 @@ namespace spades {
 		                                           Vector3 eye) {
 			SPADES_MARK_FUNCTION();
 
-			cx &= numChunkWidth - 1;
-			cy &= numChunkHeight - 1;
 			if (cz < 0 || cz >= numChunkDepth)
 				return;
+
+			const float cs = (float)VulkanMapChunk::Size;
+			Vector3 center = MakeVector3((cx + 0.5F) * cs, (cy + 0.5F) * cs, (cz + 0.5F) * cs);
+			if (!renderer.SphereFrustrumCull(center, cs * 0.87F))
+				return;
+
+			cx &= numChunkWidth - 1;
+			cy &= numChunkHeight - 1;
 
 			VulkanMapChunk* chunk = GetChunk(cx, cy, cz);
 			if (chunk && chunk->IsRealized()) {
@@ -415,10 +424,20 @@ namespace spades {
 		                                               const client::DynamicLightParam& light) {
 			SPADES_MARK_FUNCTION();
 
-			cx &= numChunkWidth - 1;
-			cy &= numChunkHeight - 1;
 			if (cz < 0 || cz >= numChunkDepth)
 				return;
+
+			const float cs = (float)VulkanMapChunk::Size;
+			const float chunkRad = cs * 0.87F;
+			Vector3 center = MakeVector3((cx + 0.5F) * cs, (cy + 0.5F) * cs, (cz + 0.5F) * cs);
+			float reach = light.radius + chunkRad;
+			if ((center - light.origin).GetSquaredLength() > reach * reach)
+				return;
+			if (!renderer.SphereFrustrumCull(center, chunkRad))
+				return;
+
+			cx &= numChunkWidth - 1;
+			cy &= numChunkHeight - 1;
 
 			VulkanMapChunk* chunk = GetChunk(cx, cy, cz);
 			if (chunk && chunk->IsRealized()) {

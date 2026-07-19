@@ -161,3 +161,40 @@ once defaults are confirmed across maps.
 - [x] **Committed `.spv` files drift from the GLSL** — untracked
       (`git rm --cached`) and gitignored; `glslangValidator` is a hard build
       requirement so CMake always regenerates them in-tree.
+
+## Performance backlog
+
+Done in this pass:
+- Map chunk frustum culling (sunlight + dynamic light passes) — was distance-only, drew full circle behind camera
+- Per-light frustum cull + light-radius vs chunk-sphere cull in dynamic light pass
+- Sprite/LongSprite: per-frame ring buffers replace per-batch buffer allocation (was `vmaCreateBuffer` per batch, per frame)
+- `SDLVulkanDevice::ImmediateSubmit(lambda)` helper — fence-based one-shot submit, replaces the fragile bare `vkQueueSubmit(...,VK_NULL_HANDLE)`+`vkQueueWaitIdle` pattern
+- `VulkanBuffer::CreateDeviceLocal(...)` — staging → DEVICE_LOCAL upload via ImmediateSubmit
+- `VulkanOptimizedVoxelModel` vertex/index buffers now DEVICE_LOCAL (static, built once — no PCIe read per frame)
+- `VulkanImageWrapper` + `VulkanMapShadowRenderer` uploads routed through ImmediateSubmit (fence-checked, no more silent blank-texture risk)
+- Hot per-frame vector copies killed: model `params` and dynamic-light `lights` now passed by const-ref through the whole model + map draw path (was full Matrix4-heavy vector copy per model, per pass, per frame)
+- `r_vsync` now honored on the Vulkan path: 0 → IMMEDIATE (uncapped/tearing), else MAILBOX→FIFO (was hardcoded MAILBOX, ignoring the setting)
+
+### High priority
+
+- [ ] **Map chunk geometry → DEVICE_LOCAL.** Still HOST_VISIBLE. Harder than models: chunks re-upload mid-game on block edits. `UpdateIfNeeded` runs outside render passes but has no command buffer plumbed in — needs a per-frame upload command buffer + barrier before the map render pass. Do NOT use the blocking `CreateDeviceLocal` here (would stall every block break); record staging copies into the frame cmdbuf instead.
+- [ ] **Glyph/atlas upload still synchronous.** `VulkanImageWrapper` is now fence-safe but still blocks (ImmediateSubmit waits). For zero-hitch font streaming, batch sub-region updates into the per-frame transfer cmdbuf with a timeline semaphore instead of blocking.
+- [ ] **Model instancing.** `VulkanOptimizedVoxelModel` solid pass = one `vkCmdDrawIndexed(instanceCount=1)` + full push-constant refill per instance. Per-instance data in SSBO/instance buffer, one draw per (model, pipeline). Push constants ~180 bytes — near limit. Also sort params by mirrored flag to stop pipeline ping-pong inside the loop.
+
+### Medium
+
+- [ ] Per-frame descriptor pools with fence-gated reset — `VulkanDescriptorPool` reset contract currently requires caller WaitIdle.
+- [ ] Sprite/LongSprite descriptor churn: fresh set per image switch per frame. Cache per-image sets, or descriptor indexing (bindless) → one bind.
+- [ ] Barrier batching: 44 `vkCmdPipelineBarrier` sites, mostly single-image transitions. Batch adjacent ones; consider `VK_KHR_synchronization2`.
+- [ ] Verify AmbientShadow/Radiosity WaitIdle paths only run at init/map-load, not per block edit; if per-edit → fence-based deferred update.
+- [ ] Model instancing still deferred (not shader-safe blind): `depthHack` changes viewport per-instance, mirrored winding switches pipeline per-instance, and per-instance push data (MVP/color/opacity) would need SPIR-V vertex-input or SSBO rework that can't be compiled/validated here. Do it with the shader sources open, one draw path at a time.
+
+### Big / optional
+
+- [ ] Water sim → compute shader. FFT wave tanks run on CPU, uploaded + mipmapped every frame. Compute FFT kills CPU cost and staging traffic.
+- [ ] `VK_KHR_dynamic_rendering` (if min spec allows 1.3) — deletes render-pass/framebuffer boilerplate.
+
+### Hygiene
+
+- [ ] `waveTanksPlaceholder` = `std::vector<void*>` + C casts; `lights` also `void*`. Type them.
+- [ ] `RenderDepthPass` serves shadow mapping — do NOT add camera-frustum culling there without checking which frustum applies.

@@ -39,24 +39,24 @@ namespace spades {
 			 * projection-view matrix; shadowRenderPass is the shadow map render pass
 			 * the caller has begun (used for lazy pipeline creation). */
 			virtual void RenderShadowMapPass(VkCommandBuffer commandBuffer,
-			                                 std::vector<client::ModelRenderParam> params,
+			                                 const std::vector<client::ModelRenderParam>& params,
 			                                 const Matrix4& lightMatrix,
 			                                 VkRenderPass shadowRenderPass) = 0;
 
 			/** Renders only in depth buffer (optional) */
 			virtual void Prerender(VkCommandBuffer commandBuffer,
-			                       std::vector<client::ModelRenderParam> params,
+			                       const std::vector<client::ModelRenderParam>& params,
 			                       bool ghostPass) = 0;
 
 			/** Renders sunlighted solid geometry */
 			virtual void RenderSunlightPass(VkCommandBuffer commandBuffer,
-			                                std::vector<client::ModelRenderParam> params,
+			                                const std::vector<client::ModelRenderParam>& params,
 			                                bool ghostPass) = 0;
 
 			/** Adds dynamic light */
 			virtual void RenderDynamicLightPass(VkCommandBuffer commandBuffer,
-			                                    std::vector<client::ModelRenderParam> params,
-			                                    std::vector<void*> lights) = 0;
+			                                    const std::vector<client::ModelRenderParam>& params,
+			                                    const std::vector<void*>& lights) = 0;
 
 		private:
 			// members used when rendering by VulkanModelRenderer
