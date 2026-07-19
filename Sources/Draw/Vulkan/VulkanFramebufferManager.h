@@ -122,7 +122,11 @@ namespace spades {
 			// Screen copy images for water refraction sampling
 			// (can't sample from render targets during the water pass)
 			Handle<VulkanImage> screenCopyColorImage;
+			// R32_SFLOAT colour copies of D32 depth (MoltenVK can't read D32
+			// through sampler2D — silently returns 0). Filled by cross-aspect
+			// vkCmdCopyImage.
 			Handle<VulkanImage> screenCopyDepthImage;
+			Handle<VulkanImage> mirrorDepthSampleImage; // 1x only (r_water >= 3)
 
 			// Render pass used for all framebuffers
 			VkRenderPass renderPass;
@@ -221,8 +225,18 @@ namespace spades {
 				return useMSAA ? mirrorColorResolveImage : mirrorColorImage;
 			}
 			Handle<VulkanImage> GetWaterMirrorDepthImage() {
-				return useMSAA ? mirrorDepthResolveImage : mirrorDepthImage;
+				// At 1x, hand out the R32F cross-aspect copy — Water3 samples
+				// this via sampler2D, and D32-through-sampler2D reads 0 on
+				// MoltenVK. Falls back to the raw depth image if the copy was
+				// never created (r_water < 3).
+				if (useMSAA)
+					return mirrorDepthResolveImage;
+				return mirrorDepthSampleImage ? mirrorDepthSampleImage : mirrorDepthImage;
 			}
+			// 1x only: cross-aspect copy mirrorDepthImage (D32, expected in
+			// SHADER_READ_ONLY) into mirrorDepthSampleImage (R32F). No-op when
+			// MSAA is enabled or the sample image doesn't exist.
+			void CopyMirrorDepthForSampling(VkCommandBuffer commandBuffer);
 			Handle<VulkanImage> GetMirrorColorResolveImage() { return mirrorColorResolveImage; }
 			Handle<VulkanImage> GetMirrorDepthResolveImage() { return mirrorDepthResolveImage; }
 		};

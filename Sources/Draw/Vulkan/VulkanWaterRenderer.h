@@ -37,6 +37,7 @@ namespace spades {
 		class VulkanImage;
 		class VulkanProgram;
 		class VulkanPipeline;
+		class IWaveTank; // defined in VulkanWaterRenderer.cpp
 
 		class VulkanWaterRenderer {
 		private:
@@ -120,7 +121,7 @@ namespace spades {
 			// Wave height textures
 			Handle<VulkanImage> waveImage;       // Single layer (r_water < 2)
 			Handle<VulkanImage> waveImageArray;  // Multiple layers (r_water >= 2)
-			std::vector<void*> waveTanksPlaceholder;
+			std::vector<IWaveTank*> waveTanks;
 
 			// Staging buffer pool for wave uploads
 			std::vector<Handle<VulkanBuffer>> waveStagingBufferPool;

@@ -428,12 +428,12 @@ namespace spades {
 					tank = new FFTWaveTank<8>();
 				else
 					tank = new FFTWaveTank<7>();
-				waveTanksPlaceholder.push_back((void*)tank);
+				waveTanks.push_back(tank);
 			}
 
 			// Create wave image(s)
-			if (!waveTanksPlaceholder.empty()) {
-				IWaveTank* tank = (IWaveTank*)waveTanksPlaceholder[0];
+			if (!waveTanks.empty()) {
+				IWaveTank* tank = waveTanks[0];
 				uint32_t size = tank->GetSize();
 				uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(size))) + 1;
 
@@ -524,12 +524,11 @@ namespace spades {
 			SPLog("VulkanWaterRenderer destroyed");
 
 			// free wave tanks
-			for (void* p : waveTanksPlaceholder) {
-				IWaveTank* t = (IWaveTank*)p;
+			for (IWaveTank* t : waveTanks) {
 				t->Join();
 				delete t;
 			}
-			waveTanksPlaceholder.clear();
+			waveTanks.clear();
 
 			// Destroy images and buffers
 			// VulkanImage and VulkanBuffer are ref-counted (Handle) and will be freed automatically
@@ -604,12 +603,11 @@ namespace spades {
 			size_t numLayers = ((int)r_water >= 2) ? 3 : 1;
 
 			// Clear existing wave tanks if any
-			for (void* p : waveTanksPlaceholder) {
-				IWaveTank* t = (IWaveTank*)p;
+			for (IWaveTank* t : waveTanks) {
 				t->Join();
 				delete t;
 			}
-			waveTanksPlaceholder.clear();
+			waveTanks.clear();
 			waveStagingBufferPool.clear();
 
 			for (size_t i = 0; i < numLayers; i++) {
@@ -618,12 +616,12 @@ namespace spades {
 					tank = new FFTWaveTank<8>();
 				else
 					tank = new FFTWaveTank<7>();
-				waveTanksPlaceholder.push_back((void*)tank);
+				waveTanks.push_back(tank);
 			}
 
 			// Create wave image(s)
-			if (!waveTanksPlaceholder.empty()) {
-				IWaveTank* tank = (IWaveTank*)waveTanksPlaceholder[0];
+			if (!waveTanks.empty()) {
+				IWaveTank* tank = waveTanks[0];
 				uint32_t size = tank->GetSize();
 				uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(size))) + 1;
 
@@ -696,12 +694,12 @@ namespace spades {
 					tank = new FFTWaveTank<8>();
 				else
 					tank = new FFTWaveTank<7>();
-				waveTanksPlaceholder.push_back((void*)tank);
+				waveTanks.push_back(tank);
 			}
 
 			// Create wave image(s)
-			if (!waveTanksPlaceholder.empty()) {
-				IWaveTank* tank = (IWaveTank*)waveTanksPlaceholder[0];
+			if (!waveTanks.empty()) {
+				IWaveTank* tank = waveTanks[0];
 				uint32_t size = tank->GetSize();
 				uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(size))) + 1;
 
@@ -1087,14 +1085,14 @@ namespace spades {
 			SPADES_MARK_FUNCTION();
 
 			// Wait for simulations from previous frame to complete
-			for (size_t i = 0; i < waveTanksPlaceholder.size(); i++) {
-				IWaveTank* t = (IWaveTank*)waveTanksPlaceholder[i];
+			for (size_t i = 0; i < waveTanks.size(); i++) {
+				IWaveTank* t = waveTanks[i];
 				t->Join();
 			}
 
 			// Start wave simulations for the next frame
-			for (size_t i = 0; i < waveTanksPlaceholder.size(); i++) {
-				IWaveTank* tank = (IWaveTank*)waveTanksPlaceholder[i];
+			for (size_t i = 0; i < waveTanks.size(); i++) {
+				IWaveTank* tank = waveTanks[i];
 				switch (i) {
 					case 0: tank->SetTimeStep(dt); break;
 					case 1: tank->SetTimeStep(dt * 0.15704F / 0.08F); break;
@@ -1108,8 +1106,8 @@ namespace spades {
 			SPADES_MARK_FUNCTION();
 
 			// Upload wave data for all layers
-			if (!waveTanksPlaceholder.empty()) {
-				IWaveTank* t = (IWaveTank*)waveTanksPlaceholder[0];
+			if (!waveTanks.empty()) {
+				IWaveTank* t = waveTanks[0];
 				size_t bmpSize = t->GetSize() * t->GetSize() * sizeof(uint32_t);
 
 				Handle<VulkanImage> targetImage = waveImageArray ? waveImageArray : waveImage;
@@ -1120,14 +1118,14 @@ namespace spades {
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
 				// Upload each layer using pooled staging buffers
-				for (size_t i = 0; i < waveTanksPlaceholder.size(); i++) {
-					IWaveTank* tank = (IWaveTank*)waveTanksPlaceholder[i];
+				for (size_t i = 0; i < waveTanks.size(); i++) {
+					IWaveTank* tank = waveTanks[i];
 					Handle<VulkanBuffer>& staging = waveStagingBufferPool[i];
 					void* data = staging->Map();
 					memcpy(data, tank->GetBitmap(), bmpSize);
 					staging->Unmap();
 
-					if (waveTanksPlaceholder.size() == 1) {
+					if (waveTanks.size() == 1) {
 						targetImage->CopyFromBuffer(commandBuffer, staging->GetBuffer());
 					} else {
 						targetImage->CopyFromBufferToLayer(commandBuffer, staging->GetBuffer(), static_cast<uint32_t>(i));

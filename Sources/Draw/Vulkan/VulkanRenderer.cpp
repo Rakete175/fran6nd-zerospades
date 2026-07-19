@@ -1936,6 +1936,11 @@ namespace spades {
 					depthResolveFilter->Resolve(commandBuffer, mirrorDepth.GetPointerOrNull(),
 						framebufferManager->GetMirrorDepthResolveImage().GetPointerOrNull());
 				}
+			} else if ((int)r_water >= 3) {
+				// 1x: Water3 samples mirror depth through sampler2D; copy the
+				// D32 mirror depth into the R32F sample image (MoltenVK reads
+				// 0 from D32-via-sampler2D otherwise).
+				framebufferManager->CopyMirrorDepthForSampling(commandBuffer);
 			}
 		}
 

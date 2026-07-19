@@ -277,6 +277,19 @@ namespace spades {
 				mirrorDepthImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 				                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 
+				if (!useMSAA) {
+					// R32F colour copy sampled by Water3's mirrorDepthTexture —
+					// D32 read through sampler2D returns 0 on MoltenVK.
+					mirrorDepthSampleImage = Handle<VulkanImage>::New(
+					    device, renderWidth, renderHeight, VK_FORMAT_R32_SFLOAT,
+					    VK_IMAGE_TILING_OPTIMAL,
+					    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+					    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+					mirrorDepthSampleImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
+					mirrorDepthSampleImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
+					                                      VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
+				}
+
 				VkImageView mirrorAttachments[] = {
 				    mirrorColorImage->GetImageView(),
 				    mirrorDepthImage->GetImageView()
@@ -310,12 +323,17 @@ namespace spades {
 			screenCopyColorImage->CreateSampler(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
 			                                    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 
+			// R32_SFLOAT *colour* image, NOT a D32 depth image: the water shader
+			// samples this through sampler2D, and on MoltenVK a D32 depth texture
+			// read through sampler2D silently returns 0 (Metal wants depth2d<float>).
+			// Same fix as sceneDepthSampleImage; filled by a cross-aspect
+			// vkCmdCopyImage (D32 DEPTH -> R32F COLOR, identical bit pattern).
 			screenCopyDepthImage = Handle<VulkanImage>::New(
-			    device, renderWidth, renderHeight, fbDepthFormat,
+			    device, renderWidth, renderHeight, VK_FORMAT_R32_SFLOAT,
 			    VK_IMAGE_TILING_OPTIMAL,
 			    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-			screenCopyDepthImage->CreateImageView(VK_IMAGE_ASPECT_DEPTH_BIT);
+			screenCopyDepthImage->CreateImageView(VK_IMAGE_ASPECT_COLOR_BIT);
 			screenCopyDepthImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 			                                    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 			SPLog("Screen copy images created");
@@ -850,6 +868,67 @@ namespace spades {
 			0, 0, nullptr, 0, nullptr, 2, postBarriers);
 			}
 
+		void VulkanFramebufferManager::CopyMirrorDepthForSampling(VkCommandBuffer commandBuffer) {
+			SPADES_MARK_FUNCTION();
+
+			if (useMSAA || !mirrorDepthSampleImage || !mirrorDepthImage)
+				return;
+
+			// mirrorDepthImage is expected in SHADER_READ_ONLY (the mirror pass
+			// epilogue in VulkanRenderer transitions it there).
+			VkImageMemoryBarrier pre[2]{};
+			pre[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			pre[0].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			pre[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			pre[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[0].image = mirrorDepthImage->GetImage();
+			pre[0].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+			pre[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			pre[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			pre[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			pre[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			pre[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			pre[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[1].image = mirrorDepthSampleImage->GetImage();
+			pre[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			pre[1].srcAccessMask = 0;
+			pre[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0, 0, nullptr, 0, nullptr, 2, pre);
+
+			VkImageCopy depthCopy{};
+			depthCopy.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+			// Cross-aspect: D32(DEPTH) -> R32F(COLOR), identical bit pattern.
+			depthCopy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			depthCopy.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
+			vkCmdCopyImage(commandBuffer,
+			               mirrorDepthImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			               mirrorDepthSampleImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			               1, &depthCopy);
+
+			VkImageMemoryBarrier post[2]{};
+			post[0] = pre[0];
+			post[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			post[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			post[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			post[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			post[1] = pre[1];
+			post[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			post[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			post[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			post[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0, 0, nullptr, 0, nullptr, 2, post);
+		}
+
 		void VulkanFramebufferManager::CopySceneForWaterSampling(VkCommandBuffer commandBuffer) {
 			SPADES_MARK_FUNCTION();
 
@@ -958,7 +1037,8 @@ namespace spades {
 			dstBarriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			dstBarriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			dstBarriers[1].image = screenCopyDepthImage->GetImage();
-			dstBarriers[1].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+			// R32F colour target (see creation comment) — COLOR aspect.
+			dstBarriers[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 			dstBarriers[1].srcAccessMask = 0;
 			dstBarriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
@@ -981,7 +1061,9 @@ namespace spades {
 			// Copy depth
 			VkImageCopy depthCopy = {};
 			depthCopy.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-			depthCopy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+			// Cross-aspect copy: D32_SFLOAT(DEPTH) -> R32_SFLOAT(COLOR); same
+			// 32-bit float bit pattern, valid since Vulkan 1.1 (maintenance1).
+			depthCopy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
 			depthCopy.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
 			vkCmdCopyImage(commandBuffer,
 			               renderDepthImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1026,7 +1108,7 @@ namespace spades {
 			postBarriers[3].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			postBarriers[3].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			postBarriers[3].image = screenCopyDepthImage->GetImage();
-			postBarriers[3].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+			postBarriers[3].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 			postBarriers[3].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			postBarriers[3].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 

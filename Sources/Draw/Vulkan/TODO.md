@@ -106,7 +106,27 @@ remaining deltas vs GL.
       `VulkanFramebufferManager::sceneDepthSampleImage`): Fog2 samples
       the same depth texture, and a D32 depth image read through
       `sampler2D` silently returns 0 on MoltenVK — worth re-checking
-      after that fix before spending more time here.
+      after that fix before spending more time here. Note: the same
+      D32-via-sampler2D bug has now also been fixed for the *water*
+      shaders (see the water section below) — re-test Fog2 after that.
+
+## Water — depth-read fix (r_water 1/2/3)
+
+- [x] **Water 1/2 rendered flat fog colour, ignoring per-block water
+      colour.** Root cause: `screenCopyDepthImage` (the water shader's
+      `depthTexture`) was a D32 depth image sampled through `sampler2D`,
+      which silently returns 0 on MoltenVK. Depth 0 → `decodeDepth` ≈
+      zNear → `envelope` collapses → the `mix(refraction, waterColor,
+      envelope)` blend never fires and the far-plane sky guard never
+      triggers. Fixed by storing the screen-copy depth as an
+      `R32_SFLOAT` *colour* image filled by a cross-aspect
+      `vkCmdCopyImage` (D32 DEPTH → R32F COLOR), same approach as
+      `sceneDepthSampleImage`.
+- [x] **Water 3 mirror depth** (`mirrorDepthTexture`) had the same bug
+      at 1x: raw D32 sampled via `sampler2D`. Added
+      `mirrorDepthSampleImage` (R32F) + `CopyMirrorDepthForSampling`,
+      invoked after the mirror pass when `r_water >= 3` without MSAA.
+      The MSAA path already used R32F resolve targets and is unchanged.
 - [x] **Fog filter view ray glitches looking straight down** — fixed:
       degenerate near-vertical rays now early-out (fog integral is ~0
       there anyway) instead of snapping `dir.xy`, which made adjacent
@@ -196,5 +216,5 @@ Done in this pass:
 
 ### Hygiene
 
-- [ ] `waveTanksPlaceholder` = `std::vector<void*>` + C casts; `lights` also `void*`. Type them.
+- [x] `waveTanksPlaceholder` → typed `std::vector<IWaveTank*> waveTanks` (forward-declared in the header); all C casts removed. Remaining: `lights` is still `void*`.
 - [ ] `RenderDepthPass` serves shadow mapping — do NOT add camera-frustum culling there without checking which frustum applies.
