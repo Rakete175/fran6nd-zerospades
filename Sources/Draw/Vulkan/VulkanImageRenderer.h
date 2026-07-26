@@ -76,6 +76,14 @@ namespace spades {
 			~VulkanImageRenderer();
 
 			void Flush(VkCommandBuffer commandBuffer, uint32_t frameIndex);
+
+			// Discard the current frame's queued geometry without recording it.
+			void Clear() {
+				batches.clear();
+				vertices.clear();
+				indices.clear();
+			}
+
 			void SetImage(VulkanImage* img);
 			void Add(float dx1, float dy1, float dx2, float dy2, float dx3, float dy3, float dx4,
 			         float dy4, float sx1, float sy1, float sx2, float sy2, float sx3, float sy3,

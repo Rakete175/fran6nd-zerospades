@@ -967,7 +967,11 @@ namespace spades {
 		}
 
 		Vector3 VulkanRenderer::GetFogColorForSolidPass() {
-			if (r_fogShadow && shadowMapRenderer)
+			// Must test the SAME object the post-process chain gates the fog
+			// filter on (mapShadowRenderer, as GLRenderer does). Returning black
+			// here while the filter is skipped leaves the world faded to black
+			// with nothing to add the fog colour back.
+			if (r_fogShadow && mapShadowRenderer)
 				return MakeVector3(0, 0, 0);
 			else
 				return fogColor;
@@ -990,14 +994,17 @@ namespace spades {
 			currentFrameSlot = device->GetCurrentFrame();
 			vkWaitForFences(device->GetDevice(), 1, &inFlightFences[currentFrameSlot], VK_TRUE, UINT64_MAX);
 
-			// Swapchain generation changed (e.g. Alt-Tab): rebuild before acquiring.
-			if (device->GetSwapchainGeneration() != lastSwapchainGeneration) {
+			// Rebuild before acquiring, unless minimised: there is nothing to
+			// size against, and the generation counter still differs so the
+			// rebuild happens on the first frame after restore.
+			if (device->GetSwapchainGeneration() != lastSwapchainGeneration &&
+			    device->IsSwapchainValid()) {
 				RecreateSwapchainDependencies();
 			}
 
 			// Acquire next swapchain image
 			currentImageIndex = device->AcquireNextImage(&imageAvailableSemaphore, &renderFinishedSemaphore);
-			if (currentImageIndex == UINT32_MAX) {
+			if (currentImageIndex == UINT32_MAX && device->IsSwapchainValid()) {
 				// Acquire recreated the swapchain; rebuild before retrying.
 				RecreateSwapchainDependencies();
 				currentImageIndex = device->AcquireNextImage(&imageAvailableSemaphore, &renderFinishedSemaphore);
@@ -1335,9 +1342,21 @@ namespace spades {
 
 		// Rebuild swapchain-dependent resources if the swapchain was recreated since last frame
 		// (e.g. window resize triggered VK_ERROR_OUT_OF_DATE_KHR or VK_SUBOPTIMAL_KHR).
-		if (device->GetSwapchainGeneration() != lastSwapchainGeneration) {
+		if (device->GetSwapchainGeneration() != lastSwapchainGeneration &&
+		    device->IsSwapchainValid()) {
 			RecreateSwapchainDependencies();
 		}
+
+			// Minimised: drop the frame and its queued 2D batches.
+			if (!device->IsSwapchainValid()) {
+				sceneUsedInThisFrame = false;
+				if (imageRenderer)
+					imageRenderer->Clear();
+				if (temporaryImagePool)
+					temporaryImagePool->ReleaseAll();
+				SDL_Delay(10); // don't spin the CPU while minimised
+				return;
+			}
 
 			if (sceneUsedInThisFrame) {
 				// Present the image (already rendered in EndScene)
@@ -1642,6 +1661,19 @@ namespace spades {
 			if (result == VK_SUCCESS) {
 				consecutiveSubmitFailures = 0;
 				return;
+			}
+
+			// Terminal and never recovers. Swallowing it only guarantees the
+			// reported error comes from some unrelated later call.
+			if (result == VK_ERROR_DEVICE_LOST) {
+				if (device)
+					device->NoteResult(result, where);
+				SPRaise("Vulkan device lost while submitting the %s pass. The GPU "
+				        "faulted, hung, or was reset (a driver TDR). This is usually "
+				        "caused by a specific renderer feature; try disabling "
+				        "Physically Based Lighting, shadows or MSAA, and update the "
+				        "graphics driver. See SystemMessages.log for details.",
+				        where);
 			}
 
 			// A submit failure that repeats every frame means the renderer is wedged
@@ -2423,8 +2455,11 @@ namespace spades {
 
 			// Fog shadow / atmospheric in-scatter
 			if ((int)r_fogShadow && fogFilter && mapShadowRenderer && currentInput && currentOutput) {
-				fogFilter->Filter(commandBuffer, currentInput, currentOutput);
-				std::swap(currentInput, currentOutput);
+				// Only advance the ping-pong chain if the pass actually wrote
+				// `currentOutput`; swapping after a skipped pass hands the rest
+				// of the chain an image whose contents are undefined.
+				if (fogFilter->FilterChecked(commandBuffer, currentInput, currentOutput))
+					std::swap(currentInput, currentOutput);
 			}
 
 			// Depth of Field

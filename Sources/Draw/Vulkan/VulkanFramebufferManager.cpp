@@ -20,6 +20,7 @@
 
 #include "VulkanFramebufferManager.h"
 #include "VulkanImage.h"
+#include "VulkanBuffer.h"
 #include <Gui/SDLVulkanDevice.h>
 #include <Core/Debug.h>
 #include <Core/Exception.h>
@@ -137,6 +138,15 @@ namespace spades {
 				renderDepthImage->CreateSampler(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 				                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false);
 			}
+
+			// Staging for every depth -> R32F colour transfer (see the header
+			// comment on depthCopyScratchBuffer for why a direct image copy is
+			// not usable here). One D32 texel is a tightly packed 32-bit float,
+			// so the buffer is width * height * 4 bytes.
+			depthCopyScratchBuffer = Handle<VulkanBuffer>::New(
+			    device, (VkDeviceSize)renderWidth * renderHeight * 4,
+			    VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 			if (!useMSAA) {
 				// Store depth as R32_SFLOAT color image, NOT as D32_SFLOAT depth.
@@ -901,15 +911,11 @@ namespace spades {
 				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 				0, 0, nullptr, 0, nullptr, 2, pre);
 
-			VkImageCopy depthCopy{};
-			depthCopy.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-			// Cross-aspect: D32(DEPTH) -> R32F(COLOR), identical bit pattern.
-			depthCopy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-			depthCopy.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
-			vkCmdCopyImage(commandBuffer,
-			               mirrorDepthImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			               mirrorDepthSampleImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			               1, &depthCopy);
+			// Depth -> R32F colour. Routed through a scratch buffer: a direct
+			// DEPTH-aspect -> COLOR-aspect vkCmdCopyImage needs VK_KHR_maintenance8,
+			// which this device never enables.
+			CopyDepthImageToColorImage(commandBuffer, mirrorDepthImage.GetPointerOrNull(),
+			                           mirrorDepthSampleImage.GetPointerOrNull());
 
 			VkImageMemoryBarrier post[2]{};
 			post[0] = pre[0];
@@ -1059,16 +1065,11 @@ namespace spades {
 			               1, &colorCopy);
 
 			// Copy depth
-			VkImageCopy depthCopy = {};
-			depthCopy.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-			// Cross-aspect copy: D32_SFLOAT(DEPTH) -> R32_SFLOAT(COLOR); same
-			// 32-bit float bit pattern, valid since Vulkan 1.1 (maintenance1).
-			depthCopy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-			depthCopy.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
-			vkCmdCopyImage(commandBuffer,
-			               renderDepthImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			               screenCopyDepthImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			               1, &depthCopy);
+			// Depth -> R32F colour. Routed through a scratch buffer: a direct
+			// DEPTH-aspect -> COLOR-aspect vkCmdCopyImage needs VK_KHR_maintenance8,
+			// which this device never enables.
+			CopyDepthImageToColorImage(commandBuffer, renderDepthImage.GetPointerOrNull(),
+			                           screenCopyDepthImage.GetPointerOrNull());
 
 			// Transition screen copies to SHADER_READ_ONLY and source back to SHADER_READ_ONLY
 			VkImageMemoryBarrier postBarriers[4]{};
@@ -1118,6 +1119,61 @@ namespace spades {
 				0, 0, nullptr, 0, nullptr, 4, postBarriers);
 		}
 
+		void VulkanFramebufferManager::CopyDepthImageToColorImage(VkCommandBuffer commandBuffer,
+		                                                          VulkanImage* srcDepth,
+		                                                          VulkanImage* dstColor) {
+			SPADES_MARK_FUNCTION();
+
+			if (!srcDepth || !dstColor || !depthCopyScratchBuffer)
+				return;
+
+			const uint32_t w = srcDepth->GetWidth();
+			const uint32_t h = srcDepth->GetHeight();
+
+			// Depth image -> scratch buffer. Copying the depth aspect of a
+			// D32_SFLOAT image to a buffer is always legal: the spec defines
+			// that data as tightly packed, one 32-bit float per texel.
+			VkBufferImageCopy toBuffer{};
+			toBuffer.bufferOffset = 0;
+			toBuffer.bufferRowLength = 0;
+			toBuffer.bufferImageHeight = 0;
+			toBuffer.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+			toBuffer.imageOffset = {0, 0, 0};
+			toBuffer.imageExtent = {w, h, 1};
+			vkCmdCopyImageToBuffer(commandBuffer, srcDepth->GetImage(),
+			                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			                       depthCopyScratchBuffer->GetBuffer(), 1, &toBuffer);
+
+			// The buffer write must land before the buffer read below.
+			VkBufferMemoryBarrier scratchBarrier{};
+			scratchBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			scratchBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			scratchBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			scratchBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			scratchBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			scratchBarrier.buffer = depthCopyScratchBuffer->GetBuffer();
+			scratchBarrier.offset = 0;
+			scratchBarrier.size = VK_WHOLE_SIZE;
+
+			vkCmdPipelineBarrier(commandBuffer,
+			                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			                     0, 0, nullptr, 1, &scratchBarrier, 0, nullptr);
+
+			// Scratch buffer -> R32_SFLOAT colour image. Same 32-bit float bit
+			// pattern per texel, so the depth values arrive unchanged and every
+			// depth-reading shader can sample them through a plain sampler2D.
+			VkBufferImageCopy toImage{};
+			toImage.bufferOffset = 0;
+			toImage.bufferRowLength = 0;
+			toImage.bufferImageHeight = 0;
+			toImage.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			toImage.imageOffset = {0, 0, 0};
+			toImage.imageExtent = {w, h, 1};
+			vkCmdCopyBufferToImage(commandBuffer, depthCopyScratchBuffer->GetBuffer(),
+			                       dstColor->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			                       1, &toImage);
+		}
+
 		void VulkanFramebufferManager::CopySceneDepthForSampling(VkCommandBuffer commandBuffer) {
 			SPADES_MARK_FUNCTION();
 
@@ -1151,16 +1207,11 @@ namespace spades {
 				VK_PIPELINE_STAGE_TRANSFER_BIT,
 				0, 0, nullptr, 0, nullptr, 2, pre);
 
-			VkImageCopy depthCopy{};
-			depthCopy.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-			// Cross-aspect copy: D32_SFLOAT(DEPTH) → R32_SFLOAT(COLOR).
-			// Same 32-bit float bit pattern; valid since Vulkan 1.1 (maintenance1).
-			depthCopy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-			depthCopy.extent = {(uint32_t)renderWidth, (uint32_t)renderHeight, 1};
-			vkCmdCopyImage(commandBuffer,
-			               renderDepthImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			               sceneDepthSampleImage->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			               1, &depthCopy);
+			// Depth -> R32F colour. Routed through a scratch buffer: a direct
+			// DEPTH-aspect -> COLOR-aspect vkCmdCopyImage needs VK_KHR_maintenance8,
+			// which this device never enables.
+			CopyDepthImageToColorImage(commandBuffer, renderDepthImage.GetPointerOrNull(),
+			                           sceneDepthSampleImage.GetPointerOrNull());
 
 			VkImageMemoryBarrier post[2]{};
 			post[0] = pre[0];

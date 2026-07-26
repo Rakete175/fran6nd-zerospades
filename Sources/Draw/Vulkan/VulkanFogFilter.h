@@ -116,8 +116,17 @@ namespace spades {
 			VulkanFogFilter(VulkanRenderer& renderer);
 			~VulkanFogFilter();
 
+			// Returns false when nothing was written to `output` (Fog2 needs the
+			// AO / radiosity textures and skips the pass until they exist).
+			// Callers must NOT swap their ping-pong buffers on false — `output`
+			// is still uninitialised at that point.
+			bool FilterChecked(VkCommandBuffer cmd,
+			                   VulkanImage* input, VulkanImage* output);
+
 			void Filter(VkCommandBuffer cmd,
-			            VulkanImage* input, VulkanImage* output) override;
+			            VulkanImage* input, VulkanImage* output) override {
+				(void)FilterChecked(cmd, input, output);
+			}
 		};
 
 	} // namespace draw

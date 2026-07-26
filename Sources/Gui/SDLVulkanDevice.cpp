@@ -107,7 +107,9 @@ namespace spades {
 				ResolveSampleCount();
 				CreateLogicalDevice();
 				CreateAllocator();
-				CreateSwapchain();
+				if (!CreateSwapchain())
+					SPRaise("Failed to create swapchain: the window surface reports "
+					        "a zero size at startup");
 				CreateImageViews();
 				CreateCommandPool();
 				CreateSyncObjects();
@@ -642,7 +644,49 @@ namespace spades {
 			SPLog("VMA allocator created (flags: 0x%x)", allocatorFlags);
 		}
 
-		void SDLVulkanDevice::CreateSwapchain() {
+		bool SDLVulkanDevice::NoteResult(VkResult result, const char* where) {
+			if (result != VK_ERROR_DEVICE_LOST)
+				return false;
+			if (!deviceLost) {
+				deviceLost = true;
+				swapchainValid = false;
+				SPLog("[!] VK_ERROR_DEVICE_LOST reported by %s. The GPU has reset or "
+				      "faulted; every subsequent Vulkan call on this device will fail.",
+				      where ? where : "(unknown)");
+			}
+			return true;
+		}
+
+		bool SDLVulkanDevice::QuerySurfaceExtent(VkExtent2D& outExtent) {
+			VkSurfaceCapabilitiesKHR caps{};
+			VkResult res =
+			  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps);
+			if (res != VK_SUCCESS) {
+				NoteResult(res, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+				return false;
+			}
+
+			VkExtent2D extent;
+			if (caps.currentExtent.width != UINT32_MAX) {
+				// 0x0 on Windows while minimised.
+				extent = caps.currentExtent;
+			} else {
+				extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
+			}
+
+			extent.width = std::max(caps.minImageExtent.width,
+			                        std::min(caps.maxImageExtent.width, extent.width));
+			extent.height = std::max(caps.minImageExtent.height,
+			                         std::min(caps.maxImageExtent.height, extent.height));
+
+			if (extent.width == 0 || extent.height == 0)
+				return false;
+
+			outExtent = extent;
+			return true;
+		}
+
+		bool SDLVulkanDevice::CreateSwapchain() {
 			// Query swapchain support
 			VkSurfaceCapabilitiesKHR capabilities;
 			vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
@@ -686,15 +730,11 @@ namespace spades {
 					presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 			}
 
-			// Choose swap extent
-			if (capabilities.currentExtent.width != UINT32_MAX) {
-				swapchainExtent = capabilities.currentExtent;
-			} else {
-				swapchainExtent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
-				swapchainExtent.width = std::max(capabilities.minImageExtent.width,
-					std::min(capabilities.maxImageExtent.width, swapchainExtent.width));
-				swapchainExtent.height = std::max(capabilities.minImageExtent.height,
-					std::min(capabilities.maxImageExtent.height, swapchainExtent.height));
+			// A 0x0 extent is invalid and vkCreateSwapchainKHR rejects it.
+			if (!QuerySurfaceExtent(swapchainExtent)) {
+				swapchainValid = false;
+				SPLog("Swapchain not created: surface is unpresentable");
+				return false;
 			}
 
 			// Request one more image than the minimum to avoid waiting
@@ -730,6 +770,9 @@ namespace spades {
 
 			VkResult result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain);
 			if (result != VK_SUCCESS) {
+				swapchain = VK_NULL_HANDLE;
+				swapchainValid = false;
+				NoteResult(result, "vkCreateSwapchainKHR");
 				SPRaise("Failed to create swapchain (error code: %d)", result);
 			}
 
@@ -740,8 +783,13 @@ namespace spades {
 
 			swapchainImageFormat = surfaceFormat.format;
 
+			w = static_cast<int>(swapchainExtent.width);
+			h = static_cast<int>(swapchainExtent.height);
+			swapchainValid = true;
+
 			SPLog("Vulkan swapchain created (%ux%u, %u images)",
 				swapchainExtent.width, swapchainExtent.height, imageCount);
+			return true;
 		}
 
 		void SDLVulkanDevice::CreateImageViews() {
@@ -849,15 +897,25 @@ namespace spades {
 			// Note: Frame synchronization is handled by VulkanRenderer's fences in EndScene.
 			// Removed redundant fence wait that was causing frame timing issues.
 
+			if (deviceLost)
+				SPRaise("Vulkan device lost; cannot acquire a swapchain image");
+
+			if (!swapchainValid || swapchain == VK_NULL_HANDLE) {
+				if (!RecreateSwapchain())
+					return UINT32_MAX;
+			}
+
 			uint32_t imageIndex;
 			VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
 				imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-			if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_ERROR_SURFACE_LOST_KHR) {
 				RecreateSwapchain();
-				return UINT32_MAX; // Signal caller to retry
+				return UINT32_MAX; // Signal caller to skip/retry
 			} else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-				SPRaise("Failed to acquire swapchain image");
+				if (NoteResult(result, "vkAcquireNextImageKHR"))
+					SPRaise("Vulkan device lost while acquiring a swapchain image");
+				SPRaise("Failed to acquire swapchain image (error code: %d)", result);
 			}
 
 			// imageAvailable follows the frame-in-flight; renderFinished follows the
@@ -881,10 +939,13 @@ namespace spades {
 
 			VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
 
-			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
+			    result == VK_ERROR_SURFACE_LOST_KHR) {
 				RecreateSwapchain();
 			} else if (result != VK_SUCCESS) {
-				SPRaise("Failed to present swapchain image");
+				if (NoteResult(result, "vkQueuePresentKHR"))
+					SPRaise("Vulkan device lost while presenting a frame");
+				SPRaise("Failed to present swapchain image (error code: %d)", result);
 			}
 
 			currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -896,6 +957,11 @@ namespace spades {
 		}
 
 		void SDLVulkanDevice::ImmediateSubmit(const std::function<void(VkCommandBuffer)>& record) {
+			if (deviceLost)
+				SPRaise("Vulkan device lost. The GPU faulted or was reset earlier in "
+				        "this session; see the preceding entries in SystemMessages.log "
+				        "for the first failure. Rendering cannot continue.");
+
 			VkCommandBufferAllocateInfo allocInfo{};
 			allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 			allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -942,32 +1008,56 @@ namespace spades {
 				vkDestroyFence(device, fence, nullptr);
 			vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 
+			// Rarely originates here: usually the device was already dead and
+			// this is the first call that checks a return value.
+			if (NoteResult(submitRes, "ImmediateSubmit/vkQueueSubmit") ||
+			    NoteResult(waitRes, "ImmediateSubmit/vkWaitForFences"))
+				SPRaise("Vulkan device lost. The GPU faulted or was reset earlier in "
+				        "this session; see the preceding entries in SystemMessages.log "
+				        "for the first failure. Rendering cannot continue.");
+
 			if (submitRes != VK_SUCCESS)
 				SPRaise("ImmediateSubmit: queue submit failed (error %d)", submitRes);
 			if (waitRes != VK_SUCCESS)
 				SPRaise("ImmediateSubmit: wait failed (error %d)", waitRes);
 		}
 
-		void SDLVulkanDevice::RecreateSwapchain() {
-			int width = 0, height = 0;
-			SDL_GetWindowSize(window, &width, &height);
-			while (width == 0 || height == 0) {
-				SDL_PumpEvents(); // needed so SDL updates the cached size while minimized
-				SDL_GetWindowSize(window, &width, &height);
-				SDL_Delay(10);
+		bool SDLVulkanDevice::RecreateSwapchain() {
+			if (deviceLost)
+				return false;
+
+			// Not SDL_GetWindowSize: on Windows it keeps reporting the restored
+			// size while minimised, so the old zero-size guard never fired and a
+			// 0x0 currentExtent reached vkCreateSwapchainKHR. This was the Alt+Tab
+			// crash. The surface capabilities are authoritative.
+			VkExtent2D extent{};
+			if ((SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) ||
+			    !QuerySurfaceExtent(extent)) {
+				if (swapchainValid || swapchain != VK_NULL_HANDLE) {
+					vkDeviceWaitIdle(device);
+					CleanupSwapchain();
+					swapchainGeneration++;
+				}
+				swapchainValid = false;
+				return false;
 			}
 
 			vkDeviceWaitIdle(device);
 
 			CleanupSwapchain();
 
-			w = width;
-			h = height;
-			CreateSwapchain();
+			w = static_cast<int>(extent.width);
+			h = static_cast<int>(extent.height);
+			if (!CreateSwapchain()) { // raced with a minimise
+				swapchainValid = false;
+				swapchainGeneration++;
+				return false;
+			}
 			CreateImageViews();
 
 			swapchainGeneration++;
 			SPLog("Swapchain recreated (%dx%d)", w, h);
+			return true;
 		}
 
 	} // namespace gui

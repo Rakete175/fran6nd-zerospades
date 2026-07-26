@@ -454,9 +454,9 @@ namespace spades {
 		//  Filter()
 		// ─────────────────────────────────────────────────────────────────────────
 
-		void VulkanFogFilter::Filter(VkCommandBuffer cmd,
-		                              VulkanImage*    input,
-		                              VulkanImage*    output) {
+		bool VulkanFogFilter::FilterChecked(VkCommandBuffer cmd,
+		                                     VulkanImage*    input,
+		                                     VulkanImage*    output) {
 			SPADES_MARK_FUNCTION();
 
 			int frameSlot = static_cast<int>(renderer.GetCurrentFrameIndex());
@@ -634,8 +634,10 @@ namespace spades {
 					// Filter is technically unsafe to run without the extra
 					// textures bound (Fog2 pipeline expects 8 bindings). Skip
 					// the post-pass entirely; the world still renders, just
-					// without atmospheric scattering this frame.
-					return;
+					// without atmospheric scattering this frame. Reporting the
+					// skip matters: `output` was never written, so the caller
+					// must keep reading from `input`.
+					return false;
 				}
 			}
 
@@ -676,6 +678,7 @@ namespace spades {
 			vkCmdDraw(cmd, 3, 1, 0, 0);
 
 			vkCmdEndRenderPass(cmd);
+			return true;
 		}
 
 	} // namespace draw

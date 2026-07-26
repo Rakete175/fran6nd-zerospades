@@ -1126,6 +1126,30 @@ namespace spades {
 				sharedPipeline.physicalLighting = (int)r_physicalLighting != 0;
 			}
 
+			// ModelSolidPushConstants is 268 bytes, which exceeds
+			// maxPushConstantsSize on every desktop GPU (256 on NVIDIA, 128 on
+			// AMD and Intel). The non-physical prefix is 188 bytes and still
+			// exceeds a 128-byte limit.
+			{
+				VkPhysicalDeviceProperties devProps;
+				vkGetPhysicalDeviceProperties(device->GetPhysicalDevice(), &devProps);
+				const uint32_t limit = devProps.limits.maxPushConstantsSize;
+				if (sharedPipeline.physicalLighting &&
+				    sizeof(ModelSolidPushConstants) > limit) {
+					SPLog("Warning: physically based model lighting needs %d bytes of "
+					      "push constants but this device allows only %d; using the "
+					      "standard model shader instead",
+					      (int)sizeof(ModelSolidPushConstants), (int)limit);
+					sharedPipeline.physicalLighting = false;
+				}
+				if (offsetof(ModelSolidPushConstants, physicalTail) > limit) {
+					SPRaise("The model shader needs %d bytes of push constants but this "
+					        "device allows only %d. Use the OpenGL renderer.",
+					        (int)offsetof(ModelSolidPushConstants, physicalTail),
+					        (int)limit);
+				}
+			}
+
 			// Load SPIR-V shaders
 			auto LoadSPIRVFile = [](const char* filename) -> std::vector<uint32_t> {
 				return SpirvCache::Load(filename);

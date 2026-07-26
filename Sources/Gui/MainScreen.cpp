@@ -60,12 +60,28 @@ namespace spades {
 
 		// Restores renderer's state (game map, fog color)
 		// after returning from the game client.
-		void MainScreen::RestoreRenderer() {
-			ScopedPrivilegeEscalation privilege;
-			static ScriptFunction func("MainScreenUI", "void SetupRenderer()");
-			ScriptContextHandle c = func.Prepare();
-			c->SetObject(&*ui);
-			c.ExecuteChecked();
+		bool MainScreen::RestoreRenderer() {
+			// Runs from catch blocks, after the client has already failed.
+			// SetupRenderer reloads the title map and touches the GPU, so it can
+			// fail too; throwing from here turns a reportable error into a fatal
+			// one that blames the wrong code.
+			rendererError.clear();
+			try {
+				ScopedPrivilegeEscalation privilege;
+				static ScriptFunction func("MainScreenUI", "void SetupRenderer()");
+				ScriptContextHandle c = func.Prepare();
+				c->SetObject(&*ui);
+				c.ExecuteChecked();
+				return true;
+			} catch (const std::exception& ex) {
+				rendererError = ex.what();
+				SPLog("[!] Failed to restore the main screen renderer: %s", ex.what());
+				return false;
+			} catch (...) {
+				rendererError = "unknown error";
+				SPLog("[!] Failed to restore the main screen renderer: unknown error");
+				return false;
+			}
 		}
 
 		bool MainScreen::NeedsAbsoluteMouseCoordinate() {
@@ -247,7 +263,11 @@ namespace spades {
 					SPLog("[!] Error while running a game client: %s", ex.what());
 					subview->Closing();
 					subview = NULL;
-					RestoreRenderer();
+					if (!RestoreRenderer()) {
+						SPRaise("The game client failed (%s) and the renderer could "
+						        "not be restored afterwards (%s).",
+						        ex.what(), rendererError.c_str());
+					}
 					helper->errorMessage = ex.what();
 				}
 			}
@@ -283,7 +303,9 @@ namespace spades {
 					if (subview->WantsToBeClosed()) {
 						subview->Closing();
 						subview = NULL;
-						RestoreRenderer();
+						if (!RestoreRenderer())
+							SPRaise("The renderer could not be restored after leaving "
+							        "the game: %s", rendererError.c_str());
 						return;
 					} else {
 						return;
@@ -292,7 +314,11 @@ namespace spades {
 					SPLog("[!] Error while running a game client: %s", ex.what());
 					subview->Closing();
 					subview = NULL;
-					RestoreRenderer();
+					if (!RestoreRenderer()) {
+						SPRaise("The game client failed (%s) and the renderer could "
+						        "not be restored afterwards (%s).",
+						        ex.what(), rendererError.c_str());
+					}
 					helper->errorMessage = ex.what();
 					return;
 				}

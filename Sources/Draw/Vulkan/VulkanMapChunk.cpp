@@ -286,16 +286,20 @@ namespace spades {
 			if (!vertices.empty()) {
 				size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
 
-				if (!vertexBuffer || vertexBuffer->GetSize() != vertexBufferSize) {
-					// Queue old buffer for deferred deletion to ensure GPU is done with it
-					if (vertexBuffer) {
-						renderer.GetRenderer().QueueBufferForDeletion(vertexBuffer);
-					}
-					vertexBuffer.Set(nullptr, false);
-					vertexBuffer = Handle<VulkanBuffer>::New(
-					    device, vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-					    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+				// Always allocate a fresh buffer and retire the old one through the
+				// deferred-deletion queue. Reusing the allocation when the size
+				// happens to match looks like a cheap win, but this memory is
+				// HOST_VISIBLE and may still be bound by the 1-2 frames already in
+				// flight: memcpy'ing into it mid-flight tears the geometry the GPU
+				// is reading, which shows up as blocks flickering for a frame after
+				// a block edit.
+				if (vertexBuffer) {
+					renderer.GetRenderer().QueueBufferForDeletion(vertexBuffer);
 				}
+				vertexBuffer.Set(nullptr, false);
+				vertexBuffer = Handle<VulkanBuffer>::New(
+				    device, vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 				void* data = vertexBuffer->Map();
 				memcpy(data, vertices.data(), vertexBufferSize);
@@ -312,16 +316,15 @@ namespace spades {
 			if (!indices.empty()) {
 				size_t indexBufferSize = indices.size() * sizeof(uint16_t);
 
-				if (!indexBuffer || indexBuffer->GetSize() != indexBufferSize) {
-					// Queue old buffer for deferred deletion to ensure GPU is done with it
-					if (indexBuffer) {
-						renderer.GetRenderer().QueueBufferForDeletion(indexBuffer);
-					}
-					indexBuffer.Set(nullptr, false);
-					indexBuffer = Handle<VulkanBuffer>::New(
-					    device, indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-					    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+				// Same in-flight hazard as the vertex buffer above: never write
+				// into an allocation a queued frame may still be indexing from.
+				if (indexBuffer) {
+					renderer.GetRenderer().QueueBufferForDeletion(indexBuffer);
 				}
+				indexBuffer.Set(nullptr, false);
+				indexBuffer = Handle<VulkanBuffer>::New(
+				    device, indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 				void* data = indexBuffer->Map();
 				memcpy(data, indices.data(), indexBufferSize);

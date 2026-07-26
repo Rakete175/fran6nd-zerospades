@@ -33,6 +33,7 @@ namespace spades {
 
 	namespace draw {
 		class VulkanImage;
+		class VulkanBuffer;
 
 		class VulkanFramebufferManager {
 		public:
@@ -123,10 +124,30 @@ namespace spades {
 			// (can't sample from render targets during the water pass)
 			Handle<VulkanImage> screenCopyColorImage;
 			// R32_SFLOAT colour copies of D32 depth (MoltenVK can't read D32
-			// through sampler2D — silently returns 0). Filled by cross-aspect
-			// vkCmdCopyImage.
+			// through sampler2D — silently returns 0). Filled by
+			// CopyDepthImageToColorImage().
 			Handle<VulkanImage> screenCopyDepthImage;
 			Handle<VulkanImage> mirrorDepthSampleImage; // 1x only (r_water >= 3)
+
+			// Scratch buffer backing every D32(DEPTH) -> R32F(COLOR) transfer.
+			//
+			// A direct vkCmdCopyImage with srcSubresource.aspectMask = DEPTH and
+			// dstSubresource.aspectMask = COLOR is only legal when the
+			// VK_KHR_maintenance8 feature is enabled
+			// (VUID-vkCmdCopyImage-srcSubresource-10210). This instance requests
+			// Vulkan 1.0 and never enables that extension, so such a copy is
+			// undefined: on drivers that don't implement it the destination is
+			// left untouched and every depth-reading shader (fog, DoF, water,
+			// lens flare) reads zero. Routing the transfer through a buffer is
+			// unconditionally legal for depth aspects, so we do that instead.
+			Handle<VulkanBuffer> depthCopyScratchBuffer;
+
+			// Legal replacement for the cross-aspect vkCmdCopyImage. Expects
+			// srcDepth in TRANSFER_SRC_OPTIMAL and dstColor in
+			// TRANSFER_DST_OPTIMAL; leaves both in those layouts (callers own
+			// the surrounding barriers).
+			void CopyDepthImageToColorImage(VkCommandBuffer commandBuffer,
+			                                VulkanImage* srcDepth, VulkanImage* dstColor);
 
 			// Render pass used for all framebuffers
 			VkRenderPass renderPass;

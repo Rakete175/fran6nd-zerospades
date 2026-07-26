@@ -92,6 +92,14 @@ namespace spades {
 			// Swapchain generation counter, incremented on every successful recreation
 		uint32_t swapchainGeneration{0};
 
+		// Latched on the first VK_ERROR_DEVICE_LOST anywhere; every later call
+		// fails too, so the first observation is the only useful one.
+		bool deviceLost{false};
+
+		// False while the window has no presentable surface (minimised, or a
+		// 0x0 client area). Frames must be skipped, not failed.
+		bool swapchainValid{false};
+
 		// Debug messenger (only in debug mode)
 #ifndef NDEBUG
 			VkDebugUtilsMessengerEXT debugMessenger;
@@ -105,8 +113,10 @@ namespace spades {
 			void ResolveSampleCount();
 			void CreateLogicalDevice();
 			void CreateAllocator();
-			void CreateSwapchain();
+			// False (without raising) when the surface is unpresentable.
+			bool CreateSwapchain();
 			void CreateImageViews();
+			bool QuerySurfaceExtent(VkExtent2D& outExtent);
 			void CreateCommandPool();
 			void CreateSyncObjects();
 
@@ -149,8 +159,15 @@ namespace spades {
 			int ScreenWidth() const { return w; }
 			int ScreenHeight() const { return h; }
 
-			// Swapchain recreation (for window resize)
-			void RecreateSwapchain();
+			// False when the window is currently unpresentable; the caller must
+			// skip the frame rather than treat it as an error.
+			bool RecreateSwapchain();
+
+			bool IsSwapchainValid() const { return swapchainValid; }
+			bool IsDeviceLost() const { return deviceLost; }
+
+			// Latches device loss; returns true if `result` was DEVICE_LOST.
+			bool NoteResult(VkResult result, const char* where);
 
 			// Returns a monotonically increasing counter, bumped on each swapchain recreation.
 			// Callers can compare against a cached value to detect when dependent resources

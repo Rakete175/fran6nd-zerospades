@@ -489,6 +489,23 @@ namespace spades {
 				return SpirvCache::Load(filename);
 			};
 
+			// MapSolidPushConstants is 192 bytes; maxPushConstantsSize is only
+			// guaranteed to be 128 and is 256 on NVIDIA / 128 on AMD and Intel.
+			// Overrunning it corrupts adjacent driver state and loses the device.
+			{
+				VkPhysicalDeviceProperties devProps;
+				vkGetPhysicalDeviceProperties(device->GetPhysicalDevice(), &devProps);
+				if (physicalLighting &&
+				    sizeof(MapSolidPushConstants) > devProps.limits.maxPushConstantsSize) {
+					SPLog("Warning: physically based map lighting needs %d bytes of push "
+					      "constants but this device allows only %d; using the standard "
+					      "map shader instead",
+					      (int)sizeof(MapSolidPushConstants),
+					      (int)devProps.limits.maxPushConstantsSize);
+					physicalLighting = false;
+				}
+			}
+
 			std::vector<uint32_t> vertCode, fragCode;
 			if (physicalLighting) {
 				vertCode = LoadSPIRVFile("Shaders/Vulkan/BasicMapPhys.vert.spv");

@@ -26,6 +26,7 @@
 #include <Core/RefCountedObject.h>
 #include <Core/ServerAddress.h>
 #include <ScriptBindings/ScriptManager.h>
+#include <string>
 
 namespace spades {
 	namespace client {
@@ -47,7 +48,10 @@ namespace spades {
 			void DrawStartupScreen();
 			void DoInit();
 
-			void RestoreRenderer();
+			// False if the renderer could not be restored; `rendererError` then
+			// holds the reason. Never throws (called from catch blocks).
+			bool RestoreRenderer();
+			std::string rendererError;
 
 			std::string Connect(const ServerAddress &host);
 		std::string PlayDemo(const std::string &demoPath);
