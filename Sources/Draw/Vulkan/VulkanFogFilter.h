@@ -120,8 +120,17 @@ namespace spades {
 			// AO / radiosity textures and skips the pass until they exist).
 			// Callers must NOT swap their ping-pong buffers on false — `output`
 			// is still uninitialised at that point.
+			//
+			// `depthOverride`, when non-null, replaces the scene depth the filter
+			// normally samples (GetResolvedDepthImage()). The water reflection
+			// (mirror) pass needs this: GL runs the fog filter over the mirrored
+			// scene before copying it to the mirror texture (GLRenderer.cpp), and
+			// that pass must march against the MIRROR depth buffer, not the main
+			// view's. It must be in SHADER_READ_ONLY_OPTIMAL on entry, and be a
+			// single-sample image the filter can sample as a plain sampler2D.
 			bool FilterChecked(VkCommandBuffer cmd,
-			                   VulkanImage* input, VulkanImage* output);
+			                   VulkanImage* input, VulkanImage* output,
+			                   VulkanImage* depthOverride = nullptr);
 
 			void Filter(VkCommandBuffer cmd,
 			            VulkanImage* input, VulkanImage* output) override {

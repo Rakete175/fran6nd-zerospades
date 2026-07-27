@@ -293,6 +293,10 @@ namespace spades {
 
 			Vector3 GetFogColor() { return fogColor; }
 			Vector3 GetFogColorForSolidPass();
+
+			// Blit a filtered temporary image back over the mirror colour image.
+			// Both must be SHADER_READ_ONLY_OPTIMAL in and are left that way out.
+			void CopyImageOverMirror(VkCommandBuffer cmd, VulkanImage* src, VulkanImage* dst);
 			float GetFogDistance() { return fogDistance; }
 
 			const client::SceneDefinition& GetSceneDef() const { return sceneDef; }

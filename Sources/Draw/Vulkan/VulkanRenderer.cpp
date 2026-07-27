@@ -977,6 +977,71 @@ namespace spades {
 				return fogColor;
 		}
 
+		// Copies a filtered temporary image back over the mirror colour image the
+		// water shader samples. Both images are in SHADER_READ_ONLY_OPTIMAL on
+		// entry and are left that way on exit.
+		void VulkanRenderer::CopyImageOverMirror(VkCommandBuffer cmd,
+		                                         VulkanImage* src, VulkanImage* dst) {
+			SPADES_MARK_FUNCTION();
+			if (!src || !dst)
+				return;
+
+			VkImageMemoryBarrier pre[2]{};
+			pre[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			pre[0].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			pre[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			pre[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			pre[0].image = src->GetImage();
+			pre[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			pre[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			pre[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			// Whole image is overwritten, so the previous contents are irrelevant.
+			pre[1] = pre[0];
+			pre[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			pre[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			pre[1].image = dst->GetImage();
+			pre[1].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			pre[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			vkCmdPipelineBarrier(cmd,
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0, 0, nullptr, 0, nullptr, 2, pre);
+
+			VkImageCopy region{};
+			region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			region.srcSubresource.layerCount = 1;
+			region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			region.dstSubresource.layerCount = 1;
+			region.extent = {static_cast<uint32_t>(renderWidth),
+			                 static_cast<uint32_t>(renderHeight), 1};
+
+			vkCmdCopyImage(cmd,
+			               src->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			               dst->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			               1, &region);
+
+			VkImageMemoryBarrier post[2]{};
+			post[0] = pre[0];
+			post[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			post[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			post[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			post[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			post[1] = pre[1];
+			post[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			post[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			post[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			post[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			vkCmdPipelineBarrier(cmd,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0, 0, nullptr, 0, nullptr, 2, post);
+		}
+
 		void VulkanRenderer::StartScene(const client::SceneDefinition& def) {
 			SPADES_MARK_FUNCTION();
 			EnsureInitialized();
@@ -1961,18 +2026,62 @@ namespace spades {
 			// compatibility with the scene), but the water shader samples reflections
 			// as a regular sampler2D. Resolve colour (and depth at r_water >= 3) into
 			// the single-sample images the water shader binds via GetWaterMirror*().
+			// The mirror fog pass below marches against the mirror depth, so the
+			// sampleable copy is needed at r_water 2 as well (Water3 needs it
+			// regardless, for its reflection ray-march).
+			const bool mirrorFogWanted =
+			    (int)r_fogShadow != 0 && mapShadowRenderer && fogFilter && temporaryImagePool;
+			const bool needMirrorDepthSample = ((int)r_water >= 3) || mirrorFogWanted;
+
 			if (framebufferManager->IsMSAA()) {
 				framebufferManager->ResolveMirrorColor(commandBuffer,
 					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				if ((int)r_water >= 3 && depthResolveFilter) {
+				if (needMirrorDepthSample && depthResolveFilter) {
 					depthResolveFilter->Resolve(commandBuffer, mirrorDepth.GetPointerOrNull(),
 						framebufferManager->GetMirrorDepthResolveImage().GetPointerOrNull());
 				}
-			} else if ((int)r_water >= 3) {
+			} else if (needMirrorDepthSample) {
 				// 1x: Water3 samples mirror depth through sampler2D; copy the
 				// D32 mirror depth into the R32F sample image (MoltenVK reads
 				// 0 from D32-via-sampler2D otherwise).
 				framebufferManager->CopyMirrorDepthForSampling(commandBuffer);
+			}
+
+			// ---- Volumetric fog on the mirrored scene -------------------------
+			// GL does this (GLRenderer.cpp, right after restoring the matrices):
+			// it runs the fog filter over the mirrored scene and only then copies
+			// the result into the mirror texture. Vulkan was skipping it entirely.
+			//
+			// That matters a lot under r_fogShadow, because GetFogColorForSolidPass()
+			// returns BLACK: the mirror is cleared to black, no sky is drawn into
+			// it, and reflected geometry fades to black with distance. GL then
+			// paints the fog colour back in. Without the filter the Vulkan mirror
+			// is a near-black image in which only close, barely-fogged geometry is
+			// bright — so a red wall at the shoreline reflects as vivid red
+			// splotches against black, shaped by the wave normal that displaces the
+			// mirror lookup. That is the "red wave-shaped artifact".
+			//
+			// Note we deliberately run AFTER the matrices are restored, because
+			// that is what GL does (the filter there sees the main view matrices
+			// with the mirror's depth buffer).
+			if (mirrorFogWanted) {
+				Handle<VulkanImage> mirrorSrc = framebufferManager->GetWaterMirrorColorImage();
+				Handle<VulkanImage> mirrorDep = framebufferManager->GetWaterMirrorDepthImage();
+				if (mirrorSrc && mirrorDep) {
+					Handle<VulkanImage> tmp = temporaryImagePool->Acquire(
+						static_cast<uint32_t>(renderWidth),
+						static_cast<uint32_t>(renderHeight),
+						framebufferManager->GetMainColorFormat());
+					if (tmp && fogFilter->FilterChecked(commandBuffer,
+					                                    mirrorSrc.GetPointerOrNull(),
+					                                    tmp.GetPointerOrNull(),
+					                                    mirrorDep.GetPointerOrNull())) {
+						// FilterChecked leaves `tmp` in SHADER_READ_ONLY_OPTIMAL.
+						// Copy it back over the image the water shader samples.
+						CopyImageOverMirror(commandBuffer, tmp.GetPointerOrNull(),
+						                    mirrorSrc.GetPointerOrNull());
+					}
+				}
 			}
 		}
 
@@ -2181,7 +2290,12 @@ namespace spades {
 					0, 0, nullptr, 0, nullptr, 1u, barriers);
 			}
 
-			// Depth is final here (sprites are colour-only, water doesn't write depth).
+			// PRE-water depth snapshot. This is the opaque-only depth that the
+			// water shader ray-marches against (refraction / SSR), mirroring GL's
+			// tempDepthTexture. The water pass now writes depth (see
+			// VulkanWaterRenderer pipeline config), so this snapshot is retaken
+			// after the water pass below — that second copy is the one the
+			// depth-reading post filters consume.
 			if (!msaaScene) {
 				framebufferManager->CopySceneDepthForSampling(commandBuffer);
 			}
@@ -2295,6 +2409,22 @@ namespace spades {
 
 				vkCmdEndRenderPass(commandBuffer);
 
+				// POST-water depth snapshot (1x). The water surface now writes
+				// depth, and GL's post filters read a depth buffer that includes
+				// it. Retake the sampled copy here so the volumetric fog filter,
+				// depth of field and soft particles all see the water surface
+				// rather than whatever lies behind it.
+				//
+				// Safe to overwrite sceneDepthSampleImage: the water pass has
+				// ended, and at 1x the water shader samples a *different* image
+				// (screenCopyDepthImage, filled by CopySceneForWaterSampling).
+				// The render pass leaves depth in DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				// which is exactly what CopySceneDepthForSampling expects and
+				// restores.
+				if (!msaaScene) {
+					framebufferManager->CopySceneDepthForSampling(commandBuffer);
+				}
+
 				// Clear the deferred transparent buffers now that they've been drawn.
 				if (!useSoftParticles && spriteRenderer)
 					spriteRenderer->Clear();
@@ -2335,6 +2465,17 @@ namespace spades {
 					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					0, 0, nullptr, 0, nullptr, msaaScene ? 2u : 1u, waterPostBarriers);
+
+				// POST-water depth resolve (MSAA). Same reason as the 1x copy
+				// above: the depth-reading post filters must see the water
+				// surface. Depth is in SHADER_READ_ONLY here (waterPostBarriers
+				// just put it there), which is what the resolve filter samples.
+				// Under MSAA the water shader shares renderDepthResolveImage, but
+				// it has already finished sampling it — the water pass is over.
+				if (msaaScene && depthResolveFilter) {
+					depthResolveFilter->Resolve(commandBuffer, offscreenDepth.GetPointerOrNull(),
+						framebufferManager->GetResolvedDepthImage().GetPointerOrNull());
+				}
 			}
 
 			// Soft particles (smoke/blood) are drawn here, after water, so the water
@@ -2415,9 +2556,9 @@ namespace spades {
 
 			// Under MSAA, resolve the final multisampled scene colour for the
 			// post-process chain. offscreenColor is in SHADER_READ_ONLY_OPTIMAL here
-			// (every branch above ends that way). Depth was already resolved right
-			// after the opaque pass (it doesn't change afterward), so only colour is
-			// resolved now. After this, offscreenColor/offscreenDepth refer to the
+			// (every branch above ends that way). Depth was resolved after the
+			// opaque pass and again after the water pass (water writes depth), so
+			// only colour is resolved now. After this, offscreenColor/offscreenDepth refer to the
 			// resolved images and the depth-reading filters pick them up via
 			// GetResolvedDepthImage().
 			if (msaaScene) {

@@ -65,7 +65,12 @@ namespace spades {
 				Vector4 waterPlane;
 				Vector4 viewOriginVector;
 				Vector2 displaceScale;
-				Vector2 _pad1;
+				// x: 1.0 when r_fogShadow is active, else 0.0. GL gets this as the
+				// USE_VOLUMETRIC_FOG preprocessor define (GLProgramManager injects it
+				// per shader compile); the Vulkan SPIR-V is compiled once with no -D
+				// flags, so the `#if USE_VOLUMETRIC_FOG` blocks in Water2/Water3.vk.fs
+				// were always false and the reflection fade never ran. y: unused pad.
+				Vector2 volumetricFogParams;
 				Vector4 sunDirection;
 			} waterPushConstants;
 			static_assert(sizeof(WaterPushConstants) == 128,

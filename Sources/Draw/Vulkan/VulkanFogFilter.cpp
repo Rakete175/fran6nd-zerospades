@@ -456,7 +456,8 @@ namespace spades {
 
 		bool VulkanFogFilter::FilterChecked(VkCommandBuffer cmd,
 		                                     VulkanImage*    input,
-		                                     VulkanImage*    output) {
+		                                     VulkanImage*    output,
+		                                     VulkanImage*    depthOverride) {
 			SPADES_MARK_FUNCTION();
 
 			int frameSlot = static_cast<int>(renderer.GetCurrentFrameIndex());
@@ -601,7 +602,11 @@ namespace spades {
 
 			// ── Gather image views ────────────────────────────────────────────────
 
-			Handle<VulkanImage> depthImg  = renderer.GetFramebufferManager()->GetResolvedDepthImage();
+			// depthOverride lets the mirror pass march against the reflected
+			// view's depth instead of the main scene's (see the header).
+			Handle<VulkanImage> depthImg  = depthOverride
+			    ? Handle<VulkanImage>(depthOverride)
+			    : renderer.GetFramebufferManager()->GetResolvedDepthImage();
 			VulkanImage*        shadowImg       = renderer.GetMapShadowRenderer()->GetShadowImage();
 			VulkanImage*        coarseShadowImg = renderer.GetMapShadowRenderer()->GetCoarseShadowImage();
 

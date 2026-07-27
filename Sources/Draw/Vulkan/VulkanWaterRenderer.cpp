@@ -14,6 +14,7 @@
 #include <cmath>
 
 SPADES_SETTING(r_water);
+SPADES_SETTING(r_fogShadow);
 
 namespace spades {
 	namespace draw {
@@ -832,7 +833,25 @@ namespace spades {
 		cfg.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 
 		cfg.depthTestEnable = VK_TRUE;
-		cfg.depthWriteEnable = VK_FALSE; // transparent water
+		// GL writes depth for the water surface: GLFramebufferManager::
+		// PrepareForWaterRendering() ends with DepthMask(true) and
+		// GLWaterRenderer::Render() never clears it, so by the time
+		// StartPostProcessing() runs, the depth buffer holds the WATER
+		// SURFACE depth. The depth-reading post filters (volumetric fog,
+		// depth of field) therefore treat water as a real surface.
+		//
+		// With VK_FALSE here, the fog filter marched to whatever sits BEHIND
+		// the water instead. Over open water with nothing rendered underneath,
+		// that is the far plane -> maximum in-scatter -> the water pixel gets
+		// repainted entirely in fog colour ("water turns invisible when I look
+		// down at it from a cliff"). Under r_fogShadow the water shader has
+		// already faded its own colour toward black (GetFogColorForSolidPass()
+		// returns black), so there is nothing left underneath the fog.
+		//
+		// The water shader does NOT read this buffer — it samples the separate
+		// pre-water snapshot (GetWaterRefractionDepthImage()), exactly like GL
+		// samples tempDepthTexture. So writing here is safe.
+		cfg.depthWriteEnable = VK_TRUE;
 		// GL uses DepthFunc(Less), but with our IsSolid hack mirroring GL's,
 		// the z=63 water-surface blocks land at the exact same projected depth
 		// as the water plane. LESS would strictly fail for equal depths and
@@ -883,7 +902,18 @@ namespace spades {
 		}
 
 		if (!waterPipeline || numIndices == 0 || !vertexBuffer || !indexBuffer) {
-			SPLog("Early return: waterPipeline, mesh buffers, or numIndices missing");
+			// Split out per-cause: these four have completely different fixes and
+			// the combined message can't tell them apart. Rate-limited because the
+			// original fires once per frame and floods the log.
+			static int earlyReturnLogged = 0;
+			if (earlyReturnLogged < 20) {
+				++earlyReturnLogged;
+				SPLog("Water early return: pipeline=%s vertexBuffer=%s indexBuffer=%s numIndices=%u",
+				      waterPipeline ? "ok" : "NULL",
+				      vertexBuffer ? "ok" : "NULL",
+				      indexBuffer ? "ok" : "NULL",
+				      numIndices);
+			}
 			return;
 		}
 
@@ -1501,6 +1531,13 @@ void VulkanWaterRenderer::UpdateUniformBuffers(uint32_t frameIndex) {
 
 		waterPushConstants.viewOriginVector = MakeVector4(sceneDef.viewOrigin.x, sceneDef.viewOrigin.y, sceneDef.viewOrigin.z, 0.0f);
 		waterPushConstants.displaceScale = MakeVector2(1.0f / tanf(sceneDef.fovX * 0.5f), 1.0f / tanf(sceneDef.fovY * 0.5f));
+
+		// Mirrors GLProgramManager's USE_VOLUMETRIC_FOG define, which is driven by
+		// r_fogShadow. Gate on mapShadowRenderer too, the same way
+		// GetFogColorForSolidPass() does, so the flag can't be set while the fog
+		// post-pass is actually being skipped.
+		const bool volFog = (int)r_fogShadow != 0 && renderer.GetMapShadowRenderer() != nullptr;
+		waterPushConstants.volumetricFogParams = MakeVector2(volFog ? 1.0f : 0.0f, 0.0f);
 
 		Vector3 sunDir = renderer.GetSunDirection();
 		waterPushConstants.sunDirection = MakeVector4(sunDir.x, sunDir.y, sunDir.z, 0.0f);

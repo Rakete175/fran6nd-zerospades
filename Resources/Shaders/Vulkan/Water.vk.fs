@@ -69,7 +69,10 @@ layout(push_constant) uniform WaterPushConstants {
 	vec4 waterPlane;
 	vec4 viewOriginVector; // use .xyz
 	vec2 displaceScale;
-	vec2 _pad1;
+	// x: 1.0 when r_fogShadow is active (see VulkanWaterRenderer). GL gets the
+	// equivalent as the USE_VOLUMETRIC_FOG define; Vulkan SPIR-V is compiled once
+	// with no -D flags, so a #if here would be permanently false. y: unused pad.
+	vec2 volumetricFogParams;
 	vec4 sunDirection;
 } waterPC;
 

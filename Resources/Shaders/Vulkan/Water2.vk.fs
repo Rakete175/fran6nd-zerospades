@@ -72,7 +72,10 @@ layout(push_constant) uniform WaterPushConstants {
 	vec4 waterPlane;
 	vec4 viewOriginVector; // use .xyz
 	vec2 displaceScale;
-	vec2 _pad1;
+	// x: 1.0 when r_fogShadow is active (see VulkanWaterRenderer). GL gets the
+	// equivalent as the USE_VOLUMETRIC_FOG define; Vulkan SPIR-V is compiled once
+	// with no -D flags, so a #if here would be permanently false. y: unused pad.
+	vec2 volumetricFogParams;
 	vec4 sunDirection;
 } waterPC;
 
@@ -216,11 +219,17 @@ void main() {
 	//reflective += 0.03;
 
 	// reflection
-#if USE_VOLUMETRIC_FOG
-	// it's actually impossible for water reflection to cope with volumetric fog.
-	// fade the water reflection so that we don't see sharp boundary of water
-	refl *= att;
-#endif
+	// GL compiles this in via USE_VOLUMETRIC_FOG (GLProgramManager, driven by
+	// r_fogShadow). The Vulkan SPIR-V has no such define, so the preprocessor form
+	// was dead code and Vulkan reflections were never faded -- they stayed at full
+	// strength while GL's faded out. Drive it from a push constant instead.
+	//
+	// Original comment: it's actually impossible for water reflection to cope with
+	// volumetric fog. Fade the water reflection so that we don't see a sharp
+	// boundary of water.
+	if (waterPC.volumetricFogParams.x > 0.5) {
+		refl *= att;
+	}
 	fragColor.xyz = mix(fragColor.xyz, refl, reflective * att);
 
 	/* ------- Specular Reflection -------- */
